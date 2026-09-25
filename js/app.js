@@ -173,6 +173,14 @@ function computeTripCost(car, km) {
   return (km || 0) * (car.consumption || 0) / 100 * effectivePrice(car);
 }
 
+// Coste total de un trayecto tal y como se muestra al usuario: si es de
+// ida y vuelta, el coste de los km introducidos (un solo sentido) se cuenta dos veces.
+function computeTripDisplayCost(trip) {
+  const car = state.cars.find((c) => c.id === trip.carId);
+  const legCost = computeTripCost(car, trip.km);
+  return trip.roundTrip ? legCost * 2 : legCost;
+}
+
 function computePeriodSummary(period) {
   const perCarMap = new Map();
   const shareMap = new Map();
@@ -185,27 +193,36 @@ function computePeriodSummary(period) {
     day.trips.forEach((trip) => {
       const car = state.cars.find((c) => c.id === trip.carId);
       if (!car) return;
-      const cost = computeTripCost(car, trip.km);
-      totalCost += cost;
-      tripCount++;
 
-      if (!perCarMap.has(car.id)) perCarMap.set(car.id, { car, totalCost: 0, totalKm: 0, tripCount: 0 });
-      const agg = perCarMap.get(car.id);
-      agg.totalCost += cost;
-      agg.totalKm += (trip.km || 0);
-      agg.tripCount++;
+      // Un trayecto normal es un solo tramo; uno de ida y vuelta son dos tramos
+      // (mismo coche y km, pero cada uno con sus propios pasajeros y su propio coste).
+      const legs = trip.roundTrip
+        ? [trip.passengerIds, trip.returnPassengerIds || trip.passengerIds]
+        : [trip.passengerIds];
 
-      let splitSet = new Set((trip.passengerIds || []).filter((id) => state.people.some((p) => p.id === id)));
-      if (state.driverPays) splitSet.add(car.driverId);
-      if (splitSet.size === 0) splitSet.add(car.driverId);
-      const share = cost / splitSet.size;
+      legs.forEach((legPassengerIds) => {
+        const cost = computeTripCost(car, trip.km);
+        totalCost += cost;
+        tripCount++;
 
-      splitSet.forEach((pid) => {
-        if (shareMap.has(pid)) shareMap.set(pid, shareMap.get(pid) + share);
-        if (pid !== car.driverId && state.people.some((p) => p.id === pid)) {
-          const key = `${pid}|${car.driverId}`;
-          pairDebts.set(key, (pairDebts.get(key) || 0) + share);
-        }
+        if (!perCarMap.has(car.id)) perCarMap.set(car.id, { car, totalCost: 0, totalKm: 0, tripCount: 0 });
+        const agg = perCarMap.get(car.id);
+        agg.totalCost += cost;
+        agg.totalKm += (trip.km || 0);
+        agg.tripCount++;
+
+        let splitSet = new Set((legPassengerIds || []).filter((id) => state.people.some((p) => p.id === id)));
+        if (state.driverPays) splitSet.add(car.driverId);
+        if (splitSet.size === 0) splitSet.add(car.driverId);
+        const share = cost / splitSet.size;
+
+        splitSet.forEach((pid) => {
+          if (shareMap.has(pid)) shareMap.set(pid, shareMap.get(pid) + share);
+          if (pid !== car.driverId && state.people.some((p) => p.id === pid)) {
+            const key = `${pid}|${car.driverId}`;
+            pairDebts.set(key, (pairDebts.get(key) || 0) + share);
+          }
+        });
       });
     });
   });
@@ -450,7 +467,7 @@ function copyPreviousWeek() {
       target = { id: uid(), date: targetISO, trips: [] };
       state.period.days.push(target);
     }
-    const cloned = day.trips.map((t) => ({ id: uid(), carId: t.carId, km: t.km, savedTripId: t.savedTripId || null, passengerIds: [...t.passengerIds] }));
+    const cloned = day.trips.map((t) => cloneTrip(t));
     target.trips.push(...cloned);
     tripsCopied += cloned.length;
   });
@@ -516,7 +533,7 @@ function copyPreviousDay(dayId) {
   if (prev.trips.length === 0) { showToast('El día anterior no tiene trayectos'); return; }
   const target = state.period.days.find((d) => d.id === dayId);
   const doCopy = () => {
-    const cloned = prev.trips.map((t) => ({ id: uid(), carId: t.carId, km: t.km, savedTripId: t.savedTripId || null, passengerIds: [...t.passengerIds] }));
+    const cloned = prev.trips.map((t) => cloneTrip(t));
     target.trips.push(...cloned);
     saveState();
     renderRegistro();
@@ -559,7 +576,7 @@ function renderRegistro() {
   qs('#registroEmptyState').classList.toggle('hidden', days.length > 0);
 
   container.innerHTML = days.map((day, idx) => {
-    const dayCost = day.trips.reduce((sum, t) => sum + computeTripCost(state.cars.find((c) => c.id === t.carId), t.km), 0);
+    const dayCost = day.trips.reduce((sum, t) => sum + computeTripDisplayCost(t), 0);
     const tripsHTML = day.trips.length
       ? day.trips.map((trip) => renderTripRow(day, trip)).join('')
       : '<p class="hint" style="margin:4px 0 10px;">Sin trayectos este día todavía.</p>';
@@ -590,23 +607,36 @@ function renderTripRow(day, trip) {
     return `<div class="trip-row"><em class="hint">Coche eliminado. <button type="button" class="icon-btn danger" data-action="remove-trip" data-trip-id="${trip.id}">🗑</button></em></div>`;
   }
   const driver = state.people.find((p) => p.id === car.driverId);
-  const cost = computeTripCost(car, trip.km);
-  const passengerNames = (trip.passengerIds || [])
-    .map((id) => (state.people.find((p) => p.id === id) || {}).name)
-    .filter(Boolean);
+  const cost = computeTripDisplayCost(trip);
+  const nameOf = (id) => (state.people.find((p) => p.id === id) || {}).name;
+  const outboundNames = (trip.passengerIds || []).map(nameOf).filter(Boolean);
+  const driverSuffix = state.driverPays ? ` + ${esc(driver ? driver.name : 'conductor')} (conductor)` : '';
+
+  let peopleHTML;
+  if (trip.roundTrip) {
+    const returnIds = trip.returnPassengerIds || trip.passengerIds || [];
+    const returnNames = returnIds.map(nameOf).filter(Boolean);
+    const sameBothWays = JSON.stringify([...(trip.passengerIds || [])].sort()) === JSON.stringify([...returnIds].sort());
+    peopleHTML = sameBothWays
+      ? `<strong>Con:</strong> ${outboundNames.length ? esc(outboundNames.join(', ')) : 'nadie más marcado'}${driverSuffix} (ida y vuelta)`
+      : `<strong>Ida:</strong> ${outboundNames.length ? esc(outboundNames.join(', ')) : 'nadie más marcado'}${driverSuffix}<br>
+         <strong>Vuelta:</strong> ${returnNames.length ? esc(returnNames.join(', ')) : 'nadie más marcado'}${driverSuffix}`;
+  } else {
+    peopleHTML = `<strong>Con:</strong> ${outboundNames.length ? esc(outboundNames.join(', ')) : 'nadie más marcado'}${driverSuffix}`;
+  }
+
+  const metaKm = trip.roundTrip ? `${formatKm(trip.km)} × 2 (ida y vuelta)` : formatKm(trip.km);
 
   return `
     <div class="trip-row" data-trip-id="${trip.id}">
       <div class="trip-row-top">
         <div>
           <div class="trip-row-car">🚗 ${esc(car.name)}</div>
-          <div class="trip-row-meta">${esc(formatKm(trip.km))} · conduce ${esc(driver ? driver.name : '—')}</div>
+          <div class="trip-row-meta">${esc(metaKm)} · conduce ${esc(driver ? driver.name : '—')}</div>
         </div>
         <div class="trip-row-cost">${esc(formatEUR(cost))}</div>
       </div>
-      <div class="trip-row-people">
-        <strong>Con:</strong> ${passengerNames.length ? esc(passengerNames.join(', ')) : 'nadie más marcado'}${state.driverPays ? ` + ${esc(driver ? driver.name : 'conductor')} (conductor)` : ''}
-      </div>
+      <div class="trip-row-people">${peopleHTML}</div>
       <div class="trip-row-buttons">
         <button type="button" class="btn btn-secondary btn-sm" data-action="edit-trip">Editar</button>
         <button type="button" class="btn btn-secondary btn-sm" data-action="duplicate-trip">Duplicar</button>
@@ -630,11 +660,23 @@ qs('#dayList').addEventListener('click', (e) => {
   if (action === 'remove-trip') return removeTrip(dayId, e.target.closest('.trip-row')?.dataset.tripId || e.target.dataset.tripId);
 });
 
+function cloneTrip(t) {
+  return {
+    id: uid(),
+    carId: t.carId,
+    km: t.km,
+    savedTripId: t.savedTripId || null,
+    passengerIds: [...(t.passengerIds || [])],
+    roundTrip: !!t.roundTrip,
+    returnPassengerIds: t.roundTrip ? [...(t.returnPassengerIds || t.passengerIds || [])] : undefined
+  };
+}
+
 function duplicateTrip(dayId, tripId) {
   const day = state.period.days.find((d) => d.id === dayId);
   const trip = day.trips.find((t) => t.id === tripId);
   if (!trip) return;
-  const clone = { id: uid(), carId: trip.carId, km: trip.km, savedTripId: trip.savedTripId || null, passengerIds: [...trip.passengerIds] };
+  const clone = cloneTrip(trip);
   const idx = day.trips.indexOf(trip);
   day.trips.splice(idx + 1, 0, clone);
   saveState();
@@ -674,7 +716,9 @@ function openTripModal(dayId, tripId, batchDates) {
     savedTripId: editing ? editing.savedTripId
       : (lastTrip && lastTrip.savedTripId && state.savedTrips.some((s) => s.id === lastTrip.savedTripId) ? lastTrip.savedTripId : null),
     km: null,
-    passengerIds: editing ? [...editing.passengerIds] : []
+    passengerIds: editing ? [...editing.passengerIds] : [],
+    roundTrip: editing ? !!editing.roundTrip : false,
+    returnPassengerIds: editing ? [...(editing.returnPassengerIds || editing.passengerIds || [])] : []
   };
   if (editing) {
     selection.km = editing.km;
@@ -682,6 +726,15 @@ function openTripModal(dayId, tripId, batchDates) {
     selection.km = (state.savedTrips.find((s) => s.id === selection.savedTripId) || {}).km || null;
   } else if (lastTrip && lastTrip.km) {
     selection.km = lastTrip.km;
+  }
+
+  // Si al editar la ida y la vuelta llevaban la misma gente, arrancamos con la
+  // vista simple (una sola lista); si eran distintas, mostramos las dos de entrada.
+  let sameReturnUI = true;
+  if (editing && editing.roundTrip) {
+    const sortedOut = [...(editing.passengerIds || [])].sort();
+    const sortedRet = [...(editing.returnPassengerIds || editing.passengerIds || [])].sort();
+    sameReturnUI = JSON.stringify(sortedOut) === JSON.stringify(sortedRet);
   }
 
   let step = 1;
@@ -719,6 +772,10 @@ function openTripModal(dayId, tripId, batchDates) {
     } else if (step === 2) {
       bodyHtml = `
         <h3 class="wizard-title">Paso 2 de 3 · ¿Cuántos km?</h3>
+        <label class="field-toggle" style="margin-bottom:14px;">
+          <input type="checkbox" id="roundTripToggle" ${selection.roundTrip ? 'checked' : ''}>
+          <span>🔁 Es de ida y vuelta</span>
+        </label>
         ${state.savedTrips.length ? `
           <p class="hint" style="margin:0 0 8px;">Trayectos guardados:</p>
           <div class="wizard-chip-row">
@@ -729,21 +786,35 @@ function openTripModal(dayId, tripId, batchDates) {
         <div class="row-inline">
           <input type="number" id="wizardKmInput" class="input" inputmode="decimal" step="0.1" min="0" value="${selection.km || ''}" placeholder="15">
           <button type="button" class="btn btn-primary" id="wizardKmNextBtn">Siguiente</button>
-        </div>`;
+        </div>
+        <p class="hint" style="margin:10px 0 0;">${selection.roundTrip ? 'Introduce los km de un solo trayecto: el coste se calcula ×2 automáticamente.' : 'Km de este trayecto (un solo sentido).'}</p>`;
     } else {
       const car = state.cars.find((c) => c.id === selection.carId);
       const driver = car ? state.people.find((p) => p.id === car.driverId) : null;
       const passengerCandidates = state.people.filter((p) => p.id !== (car ? car.driverId : null));
-      bodyHtml = `
-        <h3 class="wizard-title">Paso 3 de 3 · ¿Quién iba?</h3>
-        <p class="hint" style="margin:0 0 10px;">Aparte del conductor (${esc(driver ? driver.name : '—')}).</p>
-        <div class="checkbox-grid">
-          ${passengerCandidates.length ? passengerCandidates.map((p) => `
+
+      const renderPassengerCheckboxes = (checkedIds) => passengerCandidates.length
+        ? passengerCandidates.map((p) => `
             <label class="checkbox-row">
-              <input type="checkbox" value="${p.id}" ${selection.passengerIds.includes(p.id) ? 'checked' : ''}>
+              <input type="checkbox" value="${p.id}" ${checkedIds.includes(p.id) ? 'checked' : ''}>
               <span>${esc(p.name)}</span>
-            </label>`).join('') : '<p class="hint">No hay más personas que el conductor. Añade personas en Configuración.</p>'}
-        </div>
+            </label>`).join('')
+        : '<p class="hint">No hay más personas que el conductor. Añade personas en Configuración.</p>';
+
+      bodyHtml = `
+        <h3 class="wizard-title">Paso 3 de 3 · ${selection.roundTrip ? '¿Quién iba a la ida?' : '¿Quién iba?'}</h3>
+        <p class="hint" style="margin:0 0 10px;">Aparte del conductor (${esc(driver ? driver.name : '—')}).</p>
+        <div class="checkbox-grid" id="wizardOutboundPassengers">${renderPassengerCheckboxes(selection.passengerIds)}</div>
+        ${selection.roundTrip ? `
+          <label class="field-toggle" style="margin:14px 0 6px;">
+            <input type="checkbox" id="sameReturnToggle" ${sameReturnUI ? 'checked' : ''}>
+            <span>Los mismos pasajeros a la vuelta</span>
+          </label>
+          <div id="wizardReturnSection" class="${sameReturnUI ? 'hidden' : ''}">
+            <p class="hint" style="margin:8px 0 6px;">¿Quién iba a la vuelta?</p>
+            <div class="checkbox-grid" id="wizardReturnPassengers">${renderPassengerCheckboxes(selection.returnPassengerIds)}</div>
+          </div>
+        ` : ''}
         <button type="button" class="btn btn-primary btn-block mt-8" id="wizardSaveBtn">${batchDates ? `Añadir a ${batchDates.length} día(s)` : (editing ? 'Guardar cambios' : 'Guardar trayecto')}</button>`;
     }
 
@@ -764,10 +835,19 @@ function openTripModal(dayId, tripId, batchDates) {
         selection.carId = btn.dataset.carId;
         const newCar = state.cars.find((c) => c.id === selection.carId);
         selection.passengerIds = selection.passengerIds.filter((id) => id !== newCar.driverId);
+        selection.returnPassengerIds = selection.returnPassengerIds.filter((id) => id !== newCar.driverId);
         step = 2;
         renderStep();
       }));
     } else if (step === 2) {
+      qs('#roundTripToggle').addEventListener('change', (e) => {
+        selection.roundTrip = e.target.checked;
+        if (selection.roundTrip) {
+          sameReturnUI = true;
+          if (selection.returnPassengerIds.length === 0) selection.returnPassengerIds = [...selection.passengerIds];
+        }
+        renderStep();
+      });
       qsa('.wizard-chip').forEach((btn) => btn.addEventListener('click', () => {
         const saved = state.savedTrips.find((s) => s.id === btn.dataset.savedId);
         selection.savedTripId = saved.id;
@@ -784,16 +864,42 @@ function openTripModal(dayId, tripId, batchDates) {
         renderStep();
       });
     } else {
+      if (selection.roundTrip) {
+        qs('#sameReturnToggle').addEventListener('change', (e) => {
+          sameReturnUI = e.target.checked;
+          const currentOutbound = qsa('#wizardOutboundPassengers input[type="checkbox"]:checked').map((cb) => cb.value);
+          selection.passengerIds = currentOutbound;
+          // Tanto al activar como al desactivar "mismos pasajeros" partimos de una
+          // copia de la ida: es más rápido ajustar una diferencia puntual que
+          // marcar la vuelta entera desde cero.
+          selection.returnPassengerIds = [...currentOutbound];
+          renderStep();
+        });
+      }
+
       qs('#wizardSaveBtn').addEventListener('click', () => {
-        const passengerIds = qsa('#modalBody input[type="checkbox"]:checked').map((cb) => cb.value);
+        const passengerIds = qsa('#wizardOutboundPassengers input[type="checkbox"]:checked').map((cb) => cb.value);
+        const returnPassengerIds = selection.roundTrip
+          ? (sameReturnUI ? [...passengerIds] : qsa('#wizardReturnPassengers input[type="checkbox"]:checked').map((cb) => cb.value))
+          : undefined;
         selection.passengerIds = passengerIds;
+        selection.returnPassengerIds = returnPassengerIds || [];
         state.lastTrip = { carId: selection.carId, savedTripId: selection.savedTripId, km: selection.km };
+
+        const tripData = {
+          carId: selection.carId,
+          km: selection.km,
+          passengerIds,
+          savedTripId: selection.savedTripId,
+          roundTrip: selection.roundTrip,
+          returnPassengerIds
+        };
 
         if (batchDates && batchDates.length) {
           batchDates.forEach((date) => {
             let d = state.period.days.find((dd) => dd.date === date);
             if (!d) { d = { id: uid(), date, trips: [] }; state.period.days.push(d); }
-            d.trips.push({ id: uid(), carId: selection.carId, km: selection.km, passengerIds, savedTripId: selection.savedTripId });
+            d.trips.push({ id: uid(), ...tripData });
           });
           saveState();
           closeModal();
@@ -805,10 +911,9 @@ function openTripModal(dayId, tripId, batchDates) {
         }
 
         if (editing) {
-          editing.carId = selection.carId; editing.km = selection.km;
-          editing.passengerIds = passengerIds; editing.savedTripId = selection.savedTripId;
+          Object.assign(editing, tripData);
         } else {
-          day.trips.push({ id: uid(), carId: selection.carId, km: selection.km, passengerIds, savedTripId: selection.savedTripId });
+          day.trips.push({ id: uid(), ...tripData });
         }
         saveState();
         closeModal();
