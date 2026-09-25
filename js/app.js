@@ -173,28 +173,11 @@ function computeTripCost(car, km) {
   return (km || 0) * (car.consumption || 0) / 100 * effectivePrice(car);
 }
 
-function simplifyDebts(balanceList) {
-  const creditors = balanceList.filter((b) => b.amount > 0.005).map((b) => ({ ...b })).sort((a, b) => b.amount - a.amount);
-  const debtors = balanceList.filter((b) => b.amount < -0.005).map((b) => ({ ...b, amount: -b.amount })).sort((a, b) => b.amount - a.amount);
-  const transactions = [];
-  let i = 0, j = 0;
-  while (i < debtors.length && j < creditors.length) {
-    const d = debtors[i], c = creditors[j];
-    const amt = Math.min(d.amount, c.amount);
-    if (amt > 0.005) transactions.push({ from: d.name, to: c.name, amount: amt });
-    d.amount -= amt; c.amount -= amt;
-    if (d.amount <= 0.005) i++;
-    if (c.amount <= 0.005) j++;
-  }
-  return transactions;
-}
-
 function computePeriodSummary(period) {
   const perCarMap = new Map();
-  const balances = new Map();
   const shareMap = new Map();
   const pairDebts = new Map(); // "deudorId|acreedorId" -> importe (sin simplificar entre personas)
-  state.people.forEach((p) => { balances.set(p.id, 0); shareMap.set(p.id, 0); });
+  state.people.forEach((p) => { shareMap.set(p.id, 0); });
 
   let totalCost = 0, tripCount = 0;
 
@@ -217,9 +200,7 @@ function computePeriodSummary(period) {
       if (splitSet.size === 0) splitSet.add(car.driverId);
       const share = cost / splitSet.size;
 
-      if (balances.has(car.driverId)) balances.set(car.driverId, balances.get(car.driverId) + cost);
       splitSet.forEach((pid) => {
-        if (balances.has(pid)) balances.set(pid, balances.get(pid) - share);
         if (shareMap.has(pid)) shareMap.set(pid, shareMap.get(pid) + share);
         if (pid !== car.driverId && state.people.some((p) => p.id === pid)) {
           const key = `${pid}|${car.driverId}`;
@@ -245,18 +226,10 @@ function computePeriodSummary(period) {
     .filter((p) => p.share > 0.001)
     .sort((a, b) => b.share - a.share);
 
-  const balanceList = state.people.map((p) => ({ id: p.id, name: p.name, amount: balances.get(p.id) || 0 }));
-  const debts = simplifyDebts(balanceList);
-
   const dayCount = period.days.filter((d) => d.trips.length > 0).length;
 
-  // balances (netos por persona) se guarda también en el historial al cerrar el
-  // periodo, para poder calcular un acumulado de varios periodos más adelante.
-  const balancesNonZero = balanceList.filter((b) => Math.abs(b.amount) > 0.001);
-
-  // Deudas persona a persona, SIN simplificar entre toda la gente (a diferencia de
-  // `debts`, que busca el mínimo de pagos posible aunque eso mezcle a quien no
-  // viajó junto). Aquí solo se neta lo que se deben mutuamente esas dos personas.
+  // Deudas persona a persona: solo se neta lo que se deben mutuamente esas dos
+  // personas entre sí, sin mezclar a nadie más.
   const pairKeys = new Set();
   pairDebts.forEach((_, key) => pairKeys.add(key.split('|').sort().join('|')));
   const pairwiseBalances = [...pairKeys].map((key) => {
@@ -274,14 +247,13 @@ function computePeriodSummary(period) {
     .map((p) => (p.amount > 0 ? { from: p.aName, to: p.bName, amount: p.amount } : { from: p.bName, to: p.aName, amount: -p.amount }))
     .sort((a, b) => b.amount - a.amount);
 
-  return { totalCost, tripCount, dayCount, perCar, perPerson, debts, balances: balancesNonZero, pairwiseBalances, pairwiseDebts };
+  return { totalCost, tripCount, dayCount, perCar, perPerson, pairwiseBalances, pairwiseDebts };
 }
 
 function computeHistoryAggregate() {
   const totals = { totalCost: 0, tripCount: 0, dayCount: 0 };
   const carAgg = new Map();
   const personShare = new Map();
-  const personBalance = new Map();
   const pairAgg = new Map(); // "aId|bId" (orden fijo) -> {aId,bId,aName,bName,amount}
 
   state.history.forEach((entry) => {
@@ -301,11 +273,6 @@ function computeHistoryAggregate() {
       cur.share += p.share; cur.name = p.name;
       personShare.set(p.personId, cur);
     });
-    (s.balances || []).forEach((b) => {
-      const cur = personBalance.get(b.id) || { name: b.name, amount: 0 };
-      cur.amount += b.amount; cur.name = b.name;
-      personBalance.set(b.id, cur);
-    });
     (s.pairwiseBalances || []).forEach((p) => {
       const key = `${p.aId}|${p.bId}`;
       const cur = pairAgg.get(key) || { aId: p.aId, bId: p.bId, aName: p.aName, bName: p.bName, amount: 0 };
@@ -323,14 +290,12 @@ function computeHistoryAggregate() {
     .filter((p) => p.share > 0.001)
     .sort((a, b) => b.share - a.share);
 
-  const debts = simplifyDebts([...personBalance.entries()].map(([id, v]) => ({ id, name: v.name, amount: v.amount })));
-
   const pairwiseDebts = [...pairAgg.values()]
     .filter((p) => Math.abs(p.amount) > 0.005)
     .map((p) => (p.amount > 0 ? { from: p.aName, to: p.bName, amount: p.amount } : { from: p.bName, to: p.aName, amount: -p.amount }))
     .sort((a, b) => b.amount - a.amount);
 
-  return { ...totals, perCar, perPerson, debts, pairwiseDebts };
+  return { ...totals, perCar, perPerson, pairwiseDebts };
 }
 
 /* =====================================================================
@@ -377,6 +342,7 @@ function renderQuickWeekdays() {
     const date = weekdayDate(Number(btn.dataset.weekday));
     const exists = state.period.days.some((d) => d.date === date);
     btn.classList.toggle('active', exists);
+    btn.classList.toggle('picked', multiSelectMode && multiSelectDates.has(date));
     btn.dataset.date = date;
   });
 }
@@ -385,19 +351,75 @@ qs('#quickWeekdayButtons').addEventListener('click', (e) => {
   const btn = e.target.closest('.chip-btn');
   if (!btn) return;
   const date = btn.dataset.date || weekdayDate(Number(btn.dataset.weekday));
-  toggleDay(date);
+  if (multiSelectMode) {
+    toggleMultiSelectDate(date);
+  } else {
+    toggleDay(date);
+  }
 });
 
 qs('#addCustomDateBtn').addEventListener('click', () => {
   const input = qs('#customDateInput');
   if (!input.value) { showToast('Elige una fecha primero'); return; }
-  const existed = state.period.days.some((d) => d.date === input.value);
-  addDay(input.value);
-  showToast(existed ? 'Ese día ya estaba añadido' : 'Día añadido');
+  if (multiSelectMode) {
+    if (multiSelectDates.has(input.value)) {
+      showToast('Esa fecha ya está en la selección');
+    } else {
+      toggleMultiSelectDate(input.value);
+      showToast('Fecha añadida a la selección');
+    }
+  } else {
+    const existed = state.period.days.some((d) => d.date === input.value);
+    addDay(input.value);
+    showToast(existed ? 'Ese día ya estaba añadido' : 'Día añadido');
+  }
   input.value = '';
 });
 
 qs('#copyPrevWeekBtn').addEventListener('click', copyPreviousWeek);
+
+/* -------- Selección múltiple de días (para añadir el mismo trayecto a varios) -------- */
+
+let multiSelectMode = false;
+const multiSelectDates = new Set();
+
+function toggleMultiSelectDate(date) {
+  if (multiSelectDates.has(date)) multiSelectDates.delete(date);
+  else multiSelectDates.add(date);
+  updateMultiSelectUI();
+  renderQuickWeekdays();
+}
+
+function updateMultiSelectUI() {
+  qs('#toggleMultiSelectBtn').textContent = multiSelectMode
+    ? '✕ Cancelar selección múltiple'
+    : '☑️ Seleccionar varios días para el mismo trayecto';
+  qs('#multiSelectBar').classList.toggle('hidden', !multiSelectMode);
+  qs('#addDaysHint').classList.toggle('hidden', multiSelectMode);
+  qs('#multiSelectCount').textContent = `${multiSelectDates.size} día(s) seleccionado(s)`;
+  qs('#multiSelectAddTripBtn').disabled = multiSelectDates.size === 0;
+}
+
+function exitMultiSelect() {
+  multiSelectMode = false;
+  multiSelectDates.clear();
+  updateMultiSelectUI();
+  renderQuickWeekdays();
+}
+
+qs('#toggleMultiSelectBtn').addEventListener('click', () => {
+  multiSelectMode = !multiSelectMode;
+  multiSelectDates.clear();
+  updateMultiSelectUI();
+  renderQuickWeekdays();
+});
+
+qs('#multiSelectCancelBtn').addEventListener('click', exitMultiSelect);
+
+qs('#multiSelectAddTripBtn').addEventListener('click', () => {
+  if (multiSelectDates.size === 0) return;
+  openTripModal(null, null, [...multiSelectDates]);
+});
 
 function copyPreviousWeek() {
   const monday = getMondayOfCurrentWeek();
@@ -507,7 +529,30 @@ function copyPreviousDay(dayId) {
   }
 }
 
+function renderRegistroDashboard() {
+  const summary = computePeriodSummary(state.period);
+  const el = qs('#registroDashboard');
+
+  if (summary.tripCount === 0) {
+    el.innerHTML = `
+      <div class="summary-hero-label">PRESUPUESTO DE ESTE PERIODO</div>
+      <div class="summary-hero-value">${esc(formatEUR(0))}</div>
+      <div class="summary-hero-sub">Añade trayectos para ver el total en vivo</div>`;
+    return;
+  }
+
+  const topDebt = (summary.pairwiseDebts || [])[0];
+  el.innerHTML = `
+    <div class="summary-hero-label">PRESUPUESTO DE ESTE PERIODO</div>
+    <div class="summary-hero-value">${esc(formatEUR(summary.totalCost))}</div>
+    <div class="summary-hero-sub">${summary.dayCount} día(s) · ${summary.tripCount} trayecto(s)${topDebt ? ` · ${esc(topDebt.from)} debe ${esc(formatEUR(topDebt.amount))} a ${esc(topDebt.to)}` : ''}</div>
+    <button type="button" class="dashboard-link-btn" id="dashboardGoToResumenBtn">Ver resumen completo →</button>`;
+
+  qs('#dashboardGoToResumenBtn').addEventListener('click', () => switchTab('resumen'));
+}
+
 function renderRegistro() {
+  renderRegistroDashboard();
   renderQuickWeekdays();
   const container = qs('#dayList');
   const days = getSortedDays(state.period);
@@ -615,10 +660,10 @@ function removeTrip(dayId, tripId) {
 
 /* -------- Modal de trayecto (añadir / editar) -------- */
 
-function openTripModal(dayId, tripId) {
+function openTripModal(dayId, tripId, batchDates) {
   if (state.cars.length === 0) { showToast('Añade primero un coche en Configuración'); return; }
-  const day = state.period.days.find((d) => d.id === dayId);
-  const editing = tripId ? day.trips.find((t) => t.id === tripId) : null;
+  const day = dayId ? state.period.days.find((d) => d.id === dayId) : null;
+  const editing = (!batchDates && tripId) ? day.trips.find((t) => t.id === tripId) : null;
 
   // Al añadir un trayecto nuevo (no al editar uno existente), precargamos el
   // último coche/trayecto guardado que se usó: casi siempre es el mismo día tras día.
@@ -651,7 +696,7 @@ function openTripModal(dayId, tripId) {
   }
 
   function renderStep() {
-    qs('#modalTitle').textContent = editing ? 'Editar trayecto' : 'Añadir trayecto';
+    qs('#modalTitle').textContent = batchDates ? `Añadir trayecto a ${batchDates.length} día(s)` : (editing ? 'Editar trayecto' : 'Añadir trayecto');
 
     const stepsHtml = `<div class="wizard-steps">${[1, 2, 3].map((n) => `
       <button type="button" class="wizard-dot ${step === n ? 'active' : ''} ${step !== n && stepDone(n) ? 'done' : ''}" data-step="${n}">${n}</button>
@@ -699,7 +744,7 @@ function openTripModal(dayId, tripId) {
               <span>${esc(p.name)}</span>
             </label>`).join('') : '<p class="hint">No hay más personas que el conductor. Añade personas en Configuración.</p>'}
         </div>
-        <button type="button" class="btn btn-primary btn-block mt-8" id="wizardSaveBtn">${editing ? 'Guardar cambios' : 'Guardar trayecto'}</button>`;
+        <button type="button" class="btn btn-primary btn-block mt-8" id="wizardSaveBtn">${batchDates ? `Añadir a ${batchDates.length} día(s)` : (editing ? 'Guardar cambios' : 'Guardar trayecto')}</button>`;
     }
 
     const backHtml = step > 1 ? `<button type="button" class="btn btn-secondary btn-block mt-8" id="wizardBackBtn">← Atrás</button>` : '';
@@ -742,6 +787,22 @@ function openTripModal(dayId, tripId) {
       qs('#wizardSaveBtn').addEventListener('click', () => {
         const passengerIds = qsa('#modalBody input[type="checkbox"]:checked').map((cb) => cb.value);
         selection.passengerIds = passengerIds;
+        state.lastTrip = { carId: selection.carId, savedTripId: selection.savedTripId, km: selection.km };
+
+        if (batchDates && batchDates.length) {
+          batchDates.forEach((date) => {
+            let d = state.period.days.find((dd) => dd.date === date);
+            if (!d) { d = { id: uid(), date, trips: [] }; state.period.days.push(d); }
+            d.trips.push({ id: uid(), carId: selection.carId, km: selection.km, passengerIds, savedTripId: selection.savedTripId });
+          });
+          saveState();
+          closeModal();
+          exitMultiSelect();
+          renderRegistro();
+          updatePeriodBadge();
+          showToast(`Trayecto añadido a ${batchDates.length} día(s)`);
+          return;
+        }
 
         if (editing) {
           editing.carId = selection.carId; editing.km = selection.km;
@@ -749,7 +810,6 @@ function openTripModal(dayId, tripId) {
         } else {
           day.trips.push({ id: uid(), carId: selection.carId, km: selection.km, passengerIds, savedTripId: selection.savedTripId });
         }
-        state.lastTrip = { carId: selection.carId, savedTripId: selection.savedTripId, km: selection.km };
         saveState();
         closeModal();
         renderRegistro();
@@ -799,10 +859,6 @@ function renderSummaryBlocksHTML(summary) {
     ? summary.pairwiseDebts.map(debtRowHTML).join('')
     : `<p class="empty-state">Nadie debe nada a nadie 🎉</p>`;
 
-  const debtsHTML = summary.debts.length
-    ? summary.debts.map(debtRowHTML).join('')
-    : `<p class="empty-state">Nadie debe nada: todo está en paz 🎉</p>`;
-
   return `
     <div class="card">
       <h2>Gasto por coche</h2>
@@ -813,14 +869,9 @@ function renderSummaryBlocksHTML(summary) {
       <div class="summary-list">${peopleHTML}</div>
     </div>
     <div class="card">
-      <h2>Todas las deudas (detalle completo)</h2>
-      <p class="hint" style="margin:0 0 10px;">Quién le debe a quién, persona a persona, sin agrupar entre varias personas.</p>
+      <h2>Deudas</h2>
+      <p class="hint" style="margin:0 0 10px;">Quién le debe a quién, persona a persona.</p>
       <div class="summary-list">${pairwiseHTML}</div>
-    </div>
-    <div class="card">
-      <h2>Deudas simplificadas (pagos mínimos)</h2>
-      <p class="hint" style="margin:0 0 10px;">La forma más rápida de saldarlo todo con el menor número de pagos.</p>
-      <div class="summary-list">${debtsHTML}</div>
     </div>`;
 }
 
@@ -865,15 +916,10 @@ function buildShareText(summary, range) {
     lines.push('Consumo por persona:');
     summary.perPerson.forEach((p) => lines.push(`- ${p.name}: ${formatEUR(p.share)}`));
   }
-  if ((summary.pairwiseDebts || []).length) {
-    lines.push('');
-    lines.push('Todas las deudas (detalle completo):');
-    summary.pairwiseDebts.forEach((d) => lines.push(`- ${d.from} debe ${formatEUR(d.amount)} a ${d.to}`));
-  }
   lines.push('');
-  if (summary.debts.length) {
-    lines.push('Deudas simplificadas (pagos mínimos):');
-    summary.debts.forEach((d) => lines.push(`- ${d.from} debe ${formatEUR(d.amount)} a ${d.to}`));
+  if ((summary.pairwiseDebts || []).length) {
+    lines.push('Deudas:');
+    summary.pairwiseDebts.forEach((d) => lines.push(`- ${d.from} debe ${formatEUR(d.amount)} a ${d.to}`));
   } else {
     lines.push('No hay deudas pendientes.');
   }

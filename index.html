@@ -45,6 +45,8 @@
   <!-- ===================== REGISTRO ===================== -->
   <section id="tab-registro" class="tab-panel active" data-tab-panel="registro">
 
+    <div id="registroDashboard" class="summary-hero"></div>
+
     <div class="card add-day-card">
       <h2>Añadir días</h2>
       <div class="quick-days" id="quickWeekdayButtons">
@@ -54,11 +56,22 @@
         <button type="button" class="chip-btn" data-weekday="4">J</button>
         <button type="button" class="chip-btn" data-weekday="5">V</button>
       </div>
-      <p class="hint">Toca los días de <strong>esta semana</strong> que quieras añadir, o elige una fecha concreta:</p>
+      <p class="hint" id="addDaysHint">Toca los días de <strong>esta semana</strong> que quieras añadir, o elige una fecha concreta:</p>
       <div class="row-inline">
         <input type="date" id="customDateInput" class="input">
         <button type="button" id="addCustomDateBtn" class="btn btn-secondary">+ Añadir fecha</button>
       </div>
+
+      <button type="button" id="toggleMultiSelectBtn" class="btn btn-secondary btn-block mt-8">☑️ Seleccionar varios días para el mismo trayecto</button>
+
+      <div id="multiSelectBar" class="multi-select-bar hidden">
+        <span id="multiSelectCount">0 días seleccionados</span>
+        <div class="row-inline">
+          <button type="button" id="multiSelectAddTripBtn" class="btn btn-primary" disabled>+ Añadir trayecto</button>
+          <button type="button" id="multiSelectCancelBtn" class="btn btn-secondary">Cancelar</button>
+        </div>
+      </div>
+
       <button type="button" id="copyPrevWeekBtn" class="btn btn-secondary btn-block mt-8">📋 Copiar trayectos de la semana pasada</button>
     </div>
 
