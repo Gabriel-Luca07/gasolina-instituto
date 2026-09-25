@@ -149,11 +149,61 @@ qs('#modalOverlay').addEventListener('click', (e) => {
 
 /* -------------------------------- Tabs ---------------------------------- */
 
+const TAB_ORDER = ['registro', 'resumen', 'config', 'historial'];
+
+// Duraciones que deben coincidir con las de las animaciones CSS
+// tabExitTo*/tabEnterFrom* (con un pequeño margen). Usamos setTimeout en vez
+// de esperar al evento "animationend": si el usuario toca varias pestañas muy
+// rápido, un mismo panel puede acabar con clases de salida Y de entrada a la
+// vez, y por especificidad CSS gana la que no toca, disparando el evento
+// "equivocado" y encadenando una transición detrás de otra sin parar.
+const TAB_EXIT_MS = 170;
+const TAB_ENTER_MS = 250;
+
+let tabTransitionTimer = null;
+
 function switchTab(tab) {
+  const panels = qsa('.tab-panel');
+  const targetPanel = panels.find((p) => p.dataset.tabPanel === tab);
+  if (!targetPanel) return;
+
+  // Si había una transición en curso, la cortamos en seco (sin terminar de
+  // animar) para partir de un estado limpio antes de empezar la siguiente.
+  if (tabTransitionTimer) { clearTimeout(tabTransitionTimer); tabTransitionTimer = null; }
+  panels.forEach((p) => p.classList.remove('tab-exit-left', 'tab-exit-right', 'tab-enter-left', 'tab-enter-right'));
+
+  // El botón activo se sincroniza SIEMPRE, incluso si salimos ya mismo
+  // porque el panel destino ya está activo: si no, un toque rápido a varias
+  // pestañas puede cancelar una transición a medias y dejar el botón
+  // resaltado en una pestaña distinta a la que realmente se ve.
   qsa('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  qsa('.tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.tabPanel === tab));
-  if (tab === 'resumen') renderResumen();
-  if (tab === 'historial') renderHistorial();
+
+  const currentPanel = panels.find((p) => p.classList.contains('active'));
+  if (targetPanel === currentPanel) return;
+
+  const fromIndex = TAB_ORDER.indexOf(currentPanel ? currentPanel.dataset.tabPanel : tab);
+  const toIndex = TAB_ORDER.indexOf(tab);
+  const forward = toIndex >= fromIndex;
+
+  const showTarget = () => {
+    if (tab === 'resumen') renderResumen();
+    if (tab === 'historial') renderHistorial();
+    targetPanel.classList.add('active', forward ? 'tab-enter-right' : 'tab-enter-left');
+    tabTransitionTimer = setTimeout(() => {
+      targetPanel.classList.remove('tab-enter-right', 'tab-enter-left');
+      tabTransitionTimer = null;
+    }, TAB_ENTER_MS);
+  };
+
+  if (currentPanel) {
+    currentPanel.classList.add(forward ? 'tab-exit-left' : 'tab-exit-right');
+    tabTransitionTimer = setTimeout(() => {
+      currentPanel.classList.remove('active', 'tab-exit-left', 'tab-exit-right');
+      showTarget();
+    }, TAB_EXIT_MS);
+  } else {
+    showTarget();
+  }
 }
 
 qs('#tabbar').addEventListener('click', (e) => {
