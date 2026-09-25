@@ -1,7 +1,7 @@
 'use strict';
 
 /* =====================================================================
-   Gasolina Instituto — lógica de la app (sin frameworks, sin backend)
+   Gastos Coche — lógica de la app (sin frameworks, sin backend)
    Todo se guarda en localStorage. Ver README.md para publicar en
    GitHub Pages.
    ===================================================================== */
@@ -64,7 +64,8 @@ function createDefaultState() {
     driverPays: true,
     period: { id: uid(), createdAt: todayISO(), days: [] },
     history: [],
-    lastTrip: null
+    lastTrip: null,
+    theme: 'auto'
   };
 }
 
@@ -82,6 +83,7 @@ function loadState() {
     if (!Array.isArray(parsed.cars)) parsed.cars = [];
     if (typeof parsed.globalPrice !== 'number') parsed.globalPrice = 1.65;
     if (typeof parsed.driverPays !== 'boolean') parsed.driverPays = true;
+    if (!['auto', 'light', 'dark'].includes(parsed.theme)) parsed.theme = 'auto';
     return parsed;
   } catch (e) {
     console.error('Estado corrupto, se reinicia', e);
@@ -820,7 +822,11 @@ function openTripModal(dayId, tripId, batchDates) {
 
     const backHtml = step > 1 ? `<button type="button" class="btn btn-secondary btn-block mt-8" id="wizardBackBtn">← Atrás</button>` : '';
 
-    qs('#modalBody').innerHTML = stepsHtml + bodyHtml + backHtml;
+    const modalBodyEl = qs('#modalBody');
+    modalBodyEl.innerHTML = stepsHtml + bodyHtml + backHtml;
+    modalBodyEl.classList.remove('step-anim');
+    void modalBodyEl.offsetWidth; // fuerza reflow para reiniciar la animación en cada paso
+    modalBodyEl.classList.add('step-anim');
     bindEvents();
   }
 
@@ -1008,7 +1014,7 @@ function renderResumen() {
 
 function buildShareText(summary, range) {
   const lines = [];
-  lines.push(`⛽ Gasolina Instituto — Periodo ${range}`);
+  lines.push(`⛽ Gastos Coche — Periodo ${range}`);
   lines.push('');
   lines.push(`Total: ${formatEUR(summary.totalCost)}`);
   if (summary.perCar.length) {
@@ -1035,7 +1041,7 @@ async function shareSummary(summary, range) {
   if (summary.tripCount === 0) { showToast('No hay nada que compartir todavía'); return; }
   const text = buildShareText(summary, range);
   if (navigator.share) {
-    try { await navigator.share({ title: 'Gasolina Instituto', text }); return; } catch (e) { /* cancelado, seguimos con fallback */ }
+    try { await navigator.share({ title: 'Gastos Coche', text }); return; } catch (e) { /* cancelado, seguimos con fallback */ }
   }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try { await navigator.clipboard.writeText(text); showToast('Resumen copiado al portapapeles'); return; } catch (e) { /* sigue al prompt */ }
@@ -1452,6 +1458,36 @@ qs('#resetDataBtn').addEventListener('click', () => {
 });
 
 /* =====================================================================
+   Tema (claro / oscuro / automático)
+   ===================================================================== */
+
+const THEME_ICONS = { auto: '🌓', light: '☀️', dark: '🌙' };
+const THEME_LABELS = { auto: 'Automático (según el sistema)', light: 'Claro', dark: 'Oscuro' };
+
+function applyTheme() {
+  const root = document.documentElement;
+  if (state.theme === 'auto') {
+    root.removeAttribute('data-theme');
+  } else {
+    root.setAttribute('data-theme', state.theme);
+  }
+  const btn = qs('#themeToggleBtn');
+  btn.textContent = THEME_ICONS[state.theme];
+  btn.setAttribute('aria-label', `Tema: ${THEME_LABELS[state.theme]}. Toca para cambiar.`);
+}
+
+function setupThemeToggle() {
+  applyTheme();
+  qs('#themeToggleBtn').addEventListener('click', () => {
+    const order = ['auto', 'light', 'dark'];
+    state.theme = order[(order.indexOf(state.theme) + 1) % order.length];
+    saveState();
+    applyTheme();
+    showToast(`Tema: ${THEME_LABELS[state.theme]}`);
+  });
+}
+
+/* =====================================================================
    Banner de instalación iOS
    ===================================================================== */
 
@@ -1525,6 +1561,7 @@ function renderAll() {
   updatePeriodBadge();
 }
 
+setupThemeToggle();
 renderAll();
 setupIosBanner();
 registerServiceWorker();

@@ -1,6 +1,6 @@
-# Gasolina Instituto
+# Gastos Coche
 
-App web (PWA) para calcular cuánto paga cada persona de gasolina al compartir coche para ir al instituto. Escrita en HTML, CSS y JavaScript puro, sin frameworks ni backend. Todos los datos se guardan **solo en el dispositivo** (localStorage).
+App web (PWA) para calcular cuánto paga cada persona por compartir coche: gasolina, trayectos y deudas del grupo. Escrita en HTML, CSS y JavaScript puro, sin frameworks ni backend. Todos los datos se guardan **solo en el dispositivo** (localStorage).
 
 ## Publicar en GitHub Pages
 
@@ -8,7 +8,7 @@ App web (PWA) para calcular cuánto paga cada persona de gasolina al compartir c
    ```bash
    git init
    git add .
-   git commit -m "Primera versión de Gasolina Instituto"
+   git commit -m "Primera versión de Gastos Coche"
    git branch -M main
    git remote add origin https://github.com/TU_USUARIO/TU_REPO.git
    git push -u origin main
@@ -40,7 +40,7 @@ Desde **Configuración → Datos** puedes exportar todos tus datos a un archivo 
 
 ```
 index.html          Estructura de la app (4 pantallas: Registro, Resumen, Configuración, Historial)
-css/styles.css       Estilos, mobile-first, modo oscuro automático
+css/styles.css       Estilos, mobile-first, modo claro/oscuro (automático o manual)
 js/app.js            Toda la lógica: datos, cálculo de costes y deudas, render
 manifest.json        Manifest de la PWA
 sw.js                Service worker (caché offline)

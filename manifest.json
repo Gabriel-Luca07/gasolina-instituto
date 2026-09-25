@@ -1,7 +1,7 @@
 {
-  "name": "Gasolina Instituto",
-  "short_name": "Gasolina",
-  "description": "Calcula cuánto paga cada persona de gasolina al compartir coche para ir al instituto",
+  "name": "Gastos Coche",
+  "short_name": "Gastos Coche",
+  "description": "Calcula cuánto paga cada persona por compartir coche: gasolina, trayectos y deudas entre el grupo",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

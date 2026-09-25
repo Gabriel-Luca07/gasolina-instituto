@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
-<title>Gasolina Instituto</title>
-<meta name="description" content="Calcula cuánto paga cada persona de gasolina al compartir coche para ir al instituto">
+<title>Gastos Coche</title>
+<meta name="description" content="Calcula cuánto paga cada persona por compartir coche: gasolina, trayectos y deudas entre el grupo">
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
@@ -14,7 +14,7 @@
 <!-- iOS: instalación en pantalla de inicio -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Gasolina">
+<meta name="apple-mobile-web-app-title" content="Gastos Coche">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 
@@ -25,9 +25,12 @@
 <header class="app-header">
   <div class="app-header-title">
     <span class="app-logo" aria-hidden="true">⛽</span>
-    <h1>Gasolina Instituto</h1>
+    <h1>Gastos Coche</h1>
   </div>
-  <div class="period-badge" id="periodLabel">Periodo actual</div>
+  <div class="app-header-actions">
+    <button type="button" id="themeToggleBtn" class="theme-toggle-btn" aria-label="Cambiar tema">🌓</button>
+    <div class="period-badge" id="periodLabel">Periodo actual</div>
+  </div>
 </header>
 
 <div id="iosInstallBanner" class="ios-banner hidden">
