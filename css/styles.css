@@ -357,6 +357,7 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 
 /* ===================== Historial ===================== */
 .section-heading { font-size: 15px; font-weight: 700; margin: 4px 2px 10px; }
+#clearHistoryBtn { margin-bottom: 14px; }
 
 .history-item {
   background: var(--bg-elevated);
@@ -438,6 +439,39 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 .modal-body .btn-primary { margin-top: 6px; }
 .modal-footer-actions { display: flex; gap: 8px; margin-top: 14px; }
 .modal-footer-actions .btn { flex: 1; }
+
+/* ---- Asistente paso a paso (añadir/editar trayecto) ---- */
+.wizard-steps { display: flex; justify-content: center; gap: 10px; margin-bottom: 18px; }
+.wizard-dot {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg-inset); color: var(--text-muted);
+  font-weight: 700; font-size: 14px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.wizard-dot.done { border-color: var(--primary); color: var(--primary); }
+.wizard-dot.active { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
+
+.wizard-title { font-size: 17px; font-weight: 700; margin: 0 0 14px; text-align: center; }
+
+.wizard-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.wizard-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  text-align: left; width: 100%; padding: 14px 16px;
+  border-radius: var(--radius-md); border: 2px solid var(--border);
+  background: var(--bg-inset); cursor: pointer;
+}
+.wizard-option.selected { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 14%, var(--bg-inset)); }
+.wizard-option-title { font-weight: 700; font-size: 15px; color: var(--text); }
+.wizard-option-sub { font-size: 12.5px; color: var(--text-muted); }
+
+.wizard-chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.wizard-chip {
+  border: 1.5px solid var(--border); background: var(--bg-inset); color: var(--text);
+  border-radius: 999px; padding: 9px 14px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+}
+.wizard-chip.selected { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
 
 /* ===================== Toast ===================== */
 .toast {

@@ -193,6 +193,7 @@ function computePeriodSummary(period) {
   const perCarMap = new Map();
   const balances = new Map();
   const shareMap = new Map();
+  const pairDebts = new Map(); // "deudorId|acreedorId" -> importe (sin simplificar entre personas)
   state.people.forEach((p) => { balances.set(p.id, 0); shareMap.set(p.id, 0); });
 
   let totalCost = 0, tripCount = 0;
@@ -220,6 +221,10 @@ function computePeriodSummary(period) {
       splitSet.forEach((pid) => {
         if (balances.has(pid)) balances.set(pid, balances.get(pid) - share);
         if (shareMap.has(pid)) shareMap.set(pid, shareMap.get(pid) + share);
+        if (pid !== car.driverId && state.people.some((p) => p.id === pid)) {
+          const key = `${pid}|${car.driverId}`;
+          pairDebts.set(key, (pairDebts.get(key) || 0) + share);
+        }
       });
     });
   });
@@ -249,7 +254,27 @@ function computePeriodSummary(period) {
   // periodo, para poder calcular un acumulado de varios periodos más adelante.
   const balancesNonZero = balanceList.filter((b) => Math.abs(b.amount) > 0.001);
 
-  return { totalCost, tripCount, dayCount, perCar, perPerson, debts, balances: balancesNonZero };
+  // Deudas persona a persona, SIN simplificar entre toda la gente (a diferencia de
+  // `debts`, que busca el mínimo de pagos posible aunque eso mezcle a quien no
+  // viajó junto). Aquí solo se neta lo que se deben mutuamente esas dos personas.
+  const pairKeys = new Set();
+  pairDebts.forEach((_, key) => pairKeys.add(key.split('|').sort().join('|')));
+  const pairwiseBalances = [...pairKeys].map((key) => {
+    const [aId, bId] = key.split('|');
+    const amount = (pairDebts.get(`${aId}|${bId}`) || 0) - (pairDebts.get(`${bId}|${aId}`) || 0);
+    return {
+      aId, bId,
+      aName: (state.people.find((p) => p.id === aId) || {}).name || '?',
+      bName: (state.people.find((p) => p.id === bId) || {}).name || '?',
+      amount
+    };
+  }).filter((p) => Math.abs(p.amount) > 0.005);
+
+  const pairwiseDebts = pairwiseBalances
+    .map((p) => (p.amount > 0 ? { from: p.aName, to: p.bName, amount: p.amount } : { from: p.bName, to: p.aName, amount: -p.amount }))
+    .sort((a, b) => b.amount - a.amount);
+
+  return { totalCost, tripCount, dayCount, perCar, perPerson, debts, balances: balancesNonZero, pairwiseBalances, pairwiseDebts };
 }
 
 function computeHistoryAggregate() {
@@ -257,6 +282,7 @@ function computeHistoryAggregate() {
   const carAgg = new Map();
   const personShare = new Map();
   const personBalance = new Map();
+  const pairAgg = new Map(); // "aId|bId" (orden fijo) -> {aId,bId,aName,bName,amount}
 
   state.history.forEach((entry) => {
     const s = entry.summary || {};
@@ -280,6 +306,12 @@ function computeHistoryAggregate() {
       cur.amount += b.amount; cur.name = b.name;
       personBalance.set(b.id, cur);
     });
+    (s.pairwiseBalances || []).forEach((p) => {
+      const key = `${p.aId}|${p.bId}`;
+      const cur = pairAgg.get(key) || { aId: p.aId, bId: p.bId, aName: p.aName, bName: p.bName, amount: 0 };
+      cur.amount += p.amount; cur.aName = p.aName; cur.bName = p.bName;
+      pairAgg.set(key, cur);
+    });
   });
 
   const perCar = [...carAgg.entries()]
@@ -293,7 +325,12 @@ function computeHistoryAggregate() {
 
   const debts = simplifyDebts([...personBalance.entries()].map(([id, v]) => ({ id, name: v.name, amount: v.amount })));
 
-  return { ...totals, perCar, perPerson, debts };
+  const pairwiseDebts = [...pairAgg.values()]
+    .filter((p) => Math.abs(p.amount) > 0.005)
+    .map((p) => (p.amount > 0 ? { from: p.aName, to: p.bName, amount: p.amount } : { from: p.bName, to: p.aName, amount: -p.amount }))
+    .sort((a, b) => b.amount - a.amount);
+
+  return { ...totals, perCar, perPerson, debts, pairwiseDebts };
 }
 
 /* =====================================================================
@@ -586,88 +623,144 @@ function openTripModal(dayId, tripId) {
   // Al añadir un trayecto nuevo (no al editar uno existente), precargamos el
   // último coche/trayecto guardado que se usó: casi siempre es el mismo día tras día.
   const lastTrip = state.lastTrip;
-  const defaultCarId = editing ? editing.carId
-    : (lastTrip && state.cars.some((c) => c.id === lastTrip.carId) ? lastTrip.carId : state.cars[0].id);
-  const defaultSavedTripId = editing ? editing.savedTripId
-    : (lastTrip && lastTrip.savedTripId && state.savedTrips.some((s) => s.id === lastTrip.savedTripId) ? lastTrip.savedTripId : null);
-  let defaultKm = '';
+  const selection = {
+    carId: editing ? editing.carId
+      : (lastTrip && state.cars.some((c) => c.id === lastTrip.carId) ? lastTrip.carId : state.cars[0].id),
+    savedTripId: editing ? editing.savedTripId
+      : (lastTrip && lastTrip.savedTripId && state.savedTrips.some((s) => s.id === lastTrip.savedTripId) ? lastTrip.savedTripId : null),
+    km: null,
+    passengerIds: editing ? [...editing.passengerIds] : []
+  };
   if (editing) {
-    defaultKm = editing.km;
-  } else if (defaultSavedTripId) {
-    defaultKm = (state.savedTrips.find((s) => s.id === defaultSavedTripId) || {}).km || '';
+    selection.km = editing.km;
+  } else if (selection.savedTripId) {
+    selection.km = (state.savedTrips.find((s) => s.id === selection.savedTripId) || {}).km || null;
   } else if (lastTrip && lastTrip.km) {
-    defaultKm = lastTrip.km;
+    selection.km = lastTrip.km;
   }
 
-  const carOptions = state.cars.map((c) => `<option value="${c.id}" ${defaultCarId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
-  const savedOptions = `<option value="">— Introducir km manualmente —</option>` +
-    state.savedTrips.map((s) => `<option value="${s.id}" ${defaultSavedTripId === s.id ? 'selected' : ''}>${esc(s.name)} (${s.km} km)</option>`).join('');
+  let step = 1;
 
-  const html = `
-    <label class="field">
-      <span>Coche</span>
-      <select id="tripCarSelect" class="input">${carOptions}</select>
-    </label>
-    <label class="field">
-      <span>Trayecto guardado</span>
-      <select id="tripSavedTripSelect" class="input">${savedOptions}</select>
-    </label>
-    <label class="field">
-      <span>Kilómetros</span>
-      <input type="number" id="tripKmInput" class="input" inputmode="decimal" step="0.1" min="0" value="${defaultKm}" placeholder="15">
-    </label>
-    <label class="field">
-      <span>¿Quién iba en el coche? (aparte del conductor)</span>
-    </label>
-    <div class="checkbox-grid" id="tripPassengersContainer"></div>
-    <div class="modal-footer-actions">
-      <button type="button" class="btn btn-secondary" id="tripCancelBtn">Cancelar</button>
-      <button type="button" class="btn btn-primary" id="tripSaveBtn">Guardar</button>
-    </div>
-  `;
-  openModal(editing ? 'Editar trayecto' : 'Añadir trayecto', html);
+  qs('#modalOverlay').classList.remove('hidden');
+  renderStep();
 
-  function renderPassengerCheckboxes() {
-    const carId = qs('#tripCarSelect').value;
-    const car = state.cars.find((c) => c.id === carId);
-    const checked = editing ? new Set(editing.passengerIds) : new Set();
-    const others = state.people.filter((p) => p.id !== (car ? car.driverId : null));
-    qs('#tripPassengersContainer').innerHTML = others.length
-      ? others.map((p) => `
-        <label class="checkbox-row">
-          <input type="checkbox" value="${p.id}" ${checked.has(p.id) ? 'checked' : ''}>
-          <span>${esc(p.name)}</span>
-        </label>`).join('')
-      : '<p class="hint">No hay más personas que el conductor. Añade personas en Configuración.</p>';
+  function stepDone(n) {
+    if (n === 1) return !!selection.carId;
+    if (n === 2) return !!selection.km;
+    return false;
   }
 
-  renderPassengerCheckboxes();
+  function renderStep() {
+    qs('#modalTitle').textContent = editing ? 'Editar trayecto' : 'Añadir trayecto';
 
-  qs('#tripCarSelect').addEventListener('change', renderPassengerCheckboxes);
-  qs('#tripSavedTripSelect').addEventListener('change', (e) => {
-    const saved = state.savedTrips.find((s) => s.id === e.target.value);
-    if (saved) qs('#tripKmInput').value = saved.km;
-  });
-  qs('#tripCancelBtn').addEventListener('click', closeModal);
-  qs('#tripSaveBtn').addEventListener('click', () => {
-    const carId = qs('#tripCarSelect').value;
-    const km = parseFloat(qs('#tripKmInput').value);
-    if (!carId) { showToast('Elige un coche'); return; }
-    if (!km || km <= 0) { showToast('Introduce unos km válidos'); return; }
-    const passengerIds = qsa('#tripPassengersContainer input[type="checkbox"]:checked').map((cb) => cb.value);
-    const savedTripId = qs('#tripSavedTripSelect').value || null;
+    const stepsHtml = `<div class="wizard-steps">${[1, 2, 3].map((n) => `
+      <button type="button" class="wizard-dot ${step === n ? 'active' : ''} ${step !== n && stepDone(n) ? 'done' : ''}" data-step="${n}">${n}</button>
+    `).join('')}</div>`;
 
-    if (editing) {
-      editing.carId = carId; editing.km = km; editing.passengerIds = passengerIds; editing.savedTripId = savedTripId;
+    let bodyHtml;
+    if (step === 1) {
+      bodyHtml = `
+        <h3 class="wizard-title">Paso 1 de 3 · ¿Qué coche?</h3>
+        <div class="wizard-options">
+          ${state.cars.map((c) => {
+            const driver = state.people.find((p) => p.id === c.driverId);
+            return `
+            <button type="button" class="wizard-option ${selection.carId === c.id ? 'selected' : ''}" data-car-id="${c.id}">
+              <span class="wizard-option-title">🚗 ${esc(c.name)}</span>
+              <span class="wizard-option-sub">Conduce ${esc(driver ? driver.name : '—')} · ${c.consumption} L/100km</span>
+            </button>`;
+          }).join('')}
+        </div>`;
+    } else if (step === 2) {
+      bodyHtml = `
+        <h3 class="wizard-title">Paso 2 de 3 · ¿Cuántos km?</h3>
+        ${state.savedTrips.length ? `
+          <p class="hint" style="margin:0 0 8px;">Trayectos guardados:</p>
+          <div class="wizard-chip-row">
+            ${state.savedTrips.map((s) => `<button type="button" class="wizard-chip ${selection.savedTripId === s.id ? 'selected' : ''}" data-saved-id="${s.id}">${esc(s.name)} · ${s.km} km</button>`).join('')}
+          </div>
+          <p class="hint" style="margin:14px 0 8px;">O introduce los km a mano:</p>
+        ` : ''}
+        <div class="row-inline">
+          <input type="number" id="wizardKmInput" class="input" inputmode="decimal" step="0.1" min="0" value="${selection.km || ''}" placeholder="15">
+          <button type="button" class="btn btn-primary" id="wizardKmNextBtn">Siguiente</button>
+        </div>`;
     } else {
-      day.trips.push({ id: uid(), carId, km, passengerIds, savedTripId });
+      const car = state.cars.find((c) => c.id === selection.carId);
+      const driver = car ? state.people.find((p) => p.id === car.driverId) : null;
+      const passengerCandidates = state.people.filter((p) => p.id !== (car ? car.driverId : null));
+      bodyHtml = `
+        <h3 class="wizard-title">Paso 3 de 3 · ¿Quién iba?</h3>
+        <p class="hint" style="margin:0 0 10px;">Aparte del conductor (${esc(driver ? driver.name : '—')}).</p>
+        <div class="checkbox-grid">
+          ${passengerCandidates.length ? passengerCandidates.map((p) => `
+            <label class="checkbox-row">
+              <input type="checkbox" value="${p.id}" ${selection.passengerIds.includes(p.id) ? 'checked' : ''}>
+              <span>${esc(p.name)}</span>
+            </label>`).join('') : '<p class="hint">No hay más personas que el conductor. Añade personas en Configuración.</p>'}
+        </div>
+        <button type="button" class="btn btn-primary btn-block mt-8" id="wizardSaveBtn">${editing ? 'Guardar cambios' : 'Guardar trayecto'}</button>`;
     }
-    state.lastTrip = { carId, savedTripId, km };
-    saveState();
-    closeModal();
-    renderRegistro();
-    showToast('Trayecto guardado');
-  });
+
+    const backHtml = step > 1 ? `<button type="button" class="btn btn-secondary btn-block mt-8" id="wizardBackBtn">← Atrás</button>` : '';
+
+    qs('#modalBody').innerHTML = stepsHtml + bodyHtml + backHtml;
+    bindEvents();
+  }
+
+  function bindEvents() {
+    qsa('.wizard-dot').forEach((btn) => btn.addEventListener('click', () => {
+      step = Number(btn.dataset.step);
+      renderStep();
+    }));
+
+    if (step === 1) {
+      qsa('.wizard-option').forEach((btn) => btn.addEventListener('click', () => {
+        selection.carId = btn.dataset.carId;
+        const newCar = state.cars.find((c) => c.id === selection.carId);
+        selection.passengerIds = selection.passengerIds.filter((id) => id !== newCar.driverId);
+        step = 2;
+        renderStep();
+      }));
+    } else if (step === 2) {
+      qsa('.wizard-chip').forEach((btn) => btn.addEventListener('click', () => {
+        const saved = state.savedTrips.find((s) => s.id === btn.dataset.savedId);
+        selection.savedTripId = saved.id;
+        selection.km = saved.km;
+        step = 3;
+        renderStep();
+      }));
+      qs('#wizardKmNextBtn').addEventListener('click', () => {
+        const val = parseFloat(qs('#wizardKmInput').value);
+        if (!val || val <= 0) { showToast('Introduce unos km válidos'); return; }
+        selection.km = val;
+        selection.savedTripId = null;
+        step = 3;
+        renderStep();
+      });
+    } else {
+      qs('#wizardSaveBtn').addEventListener('click', () => {
+        const passengerIds = qsa('#modalBody input[type="checkbox"]:checked').map((cb) => cb.value);
+        selection.passengerIds = passengerIds;
+
+        if (editing) {
+          editing.carId = selection.carId; editing.km = selection.km;
+          editing.passengerIds = passengerIds; editing.savedTripId = selection.savedTripId;
+        } else {
+          day.trips.push({ id: uid(), carId: selection.carId, km: selection.km, passengerIds, savedTripId: selection.savedTripId });
+        }
+        state.lastTrip = { carId: selection.carId, savedTripId: selection.savedTripId, km: selection.km };
+        saveState();
+        closeModal();
+        renderRegistro();
+        showToast('Trayecto guardado');
+      });
+    }
+
+    if (step > 1) {
+      qs('#wizardBackBtn').addEventListener('click', () => { step -= 1; renderStep(); });
+    }
+  }
 }
 
 /* =====================================================================
@@ -694,14 +787,20 @@ function renderSummaryBlocksHTML(summary) {
       <div class="summary-item-value">${esc(formatEUR(p.share))}</div>
     </div>`).join('');
 
+  const debtRowHTML = (d) => `
+    <div class="debt-item">
+      <span>${esc(d.from)}</span>
+      <span class="debt-arrow">→</span>
+      <span>${esc(d.to)}</span>
+      <span class="debt-amount">${esc(formatEUR(d.amount))}</span>
+    </div>`;
+
+  const pairwiseHTML = (summary.pairwiseDebts || []).length
+    ? summary.pairwiseDebts.map(debtRowHTML).join('')
+    : `<p class="empty-state">Nadie debe nada a nadie 🎉</p>`;
+
   const debtsHTML = summary.debts.length
-    ? summary.debts.map((d) => `
-      <div class="debt-item">
-        <span>${esc(d.from)}</span>
-        <span class="debt-arrow">→</span>
-        <span>${esc(d.to)}</span>
-        <span class="debt-amount">${esc(formatEUR(d.amount))}</span>
-      </div>`).join('')
+    ? summary.debts.map(debtRowHTML).join('')
     : `<p class="empty-state">Nadie debe nada: todo está en paz 🎉</p>`;
 
   return `
@@ -714,7 +813,13 @@ function renderSummaryBlocksHTML(summary) {
       <div class="summary-list">${peopleHTML}</div>
     </div>
     <div class="card">
-      <h2>Deudas (pagos mínimos)</h2>
+      <h2>Todas las deudas (detalle completo)</h2>
+      <p class="hint" style="margin:0 0 10px;">Quién le debe a quién, persona a persona, sin agrupar entre varias personas.</p>
+      <div class="summary-list">${pairwiseHTML}</div>
+    </div>
+    <div class="card">
+      <h2>Deudas simplificadas (pagos mínimos)</h2>
+      <p class="hint" style="margin:0 0 10px;">La forma más rápida de saldarlo todo con el menor número de pagos.</p>
       <div class="summary-list">${debtsHTML}</div>
     </div>`;
 }
@@ -760,9 +865,14 @@ function buildShareText(summary, range) {
     lines.push('Consumo por persona:');
     summary.perPerson.forEach((p) => lines.push(`- ${p.name}: ${formatEUR(p.share)}`));
   }
+  if ((summary.pairwiseDebts || []).length) {
+    lines.push('');
+    lines.push('Todas las deudas (detalle completo):');
+    summary.pairwiseDebts.forEach((d) => lines.push(`- ${d.from} debe ${formatEUR(d.amount)} a ${d.to}`));
+  }
   lines.push('');
   if (summary.debts.length) {
-    lines.push('Deudas:');
+    lines.push('Deudas simplificadas (pagos mínimos):');
     summary.debts.forEach((d) => lines.push(`- ${d.from} debe ${formatEUR(d.amount)} a ${d.to}`));
   } else {
     lines.push('No hay deudas pendientes.');
@@ -812,6 +922,9 @@ function closePeriod(summary, range) {
 function renderHistorial() {
   const aggregateContainer = qs('#historyAggregate');
   const heading = qs('#historyListHeading');
+  const clearBtn = qs('#clearHistoryBtn');
+
+  clearBtn.classList.toggle('hidden', state.history.length === 0);
 
   if (state.history.length > 0) {
     const aggregate = computeHistoryAggregate();
@@ -861,6 +974,14 @@ qs('#historyList').addEventListener('click', (e) => {
     saveState();
     renderHistorial();
   }
+});
+
+qs('#clearHistoryBtn').addEventListener('click', () => {
+  if (!confirm('¿Borrar TODO el historial? Se perderán los totales acumulados de todos los periodos cerrados. Esta acción no se puede deshacer.')) return;
+  state.history = [];
+  saveState();
+  renderHistorial();
+  showToast('Historial borrado');
 });
 
 /* =====================================================================
