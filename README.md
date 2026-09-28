@@ -30,7 +30,15 @@ No hace falta ningún paso de compilación: son archivos estáticos.
 
 El archivo `sw.js` (service worker) cachea todos los archivos de la app la primera vez que se visita con conexión. A partir de ahí, la app funciona sin internet. Solo necesitas conexión la primera vez para instalarla y cada vez que subas una nueva versión.
 
-Si cambias los archivos y quieres forzar que los usuarios reciban la actualización, sube el número de `CACHE_VERSION` en `sw.js`.
+Para que los usuarios reciban una versión nueva hay que subir `CACHE_VERSION` en `sw.js`. El hook `.githooks/pre-commit` lo hace solo en cada commit que cambie archivos de la app (si no lo has subido ya a mano). Actívalo una vez en cada clon del repositorio:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+## Pruebas
+
+`tests.html` prueba el cálculo (`js/calc.js`): costes, reparto, pesos, deudas, pagos, consumo real, recordatorios e importación. Ábrelo en el navegador desde un servidor local (por ejemplo `python -m http.server` o la extensión Live Server de VS Code) y ejecútalo después de tocar cualquier cálculo: arriba sale en verde o en rojo, con el detalle de lo que falla.
 
 ## Copia de seguridad de los datos
 
@@ -41,8 +49,20 @@ Desde **Configuración → Datos** puedes exportar todos tus datos a un archivo 
 ```
 index.html          Estructura de la app (4 pantallas: Registro, Resumen, Configuración, Historial)
 css/styles.css       Estilos, mobile-first, modo claro/oscuro (automático o manual)
-js/app.js            Toda la lógica: datos, cálculo de costes y deudas, render
+js/utils.js          Utilidades de fechas, formato y DOM
+js/state.js          Estado y guardado en localStorage
+js/ui.js             Toast, modales, pestañas y gestos
+js/calc.js           Cálculo puro: costes, reparto, deudas, consumo real, importación
+js/registro.js       Pestaña Registro
+js/resumen.js        Pestaña Resumen
+js/historial.js      Pestaña Historial
+js/config.js         Pestaña Configuración
+js/app.js            Tema, PIN, banners, service worker y arranque
+tests.html           Pruebas del cálculo (tests/calc.test.js)
 manifest.json        Manifest de la PWA
 sw.js                Service worker (caché offline)
 icons/               Iconos de la app en varios tamaños
+.githooks/           Hook que sube CACHE_VERSION en cada commit
 ```
+
+Los scripts de `js/` son scripts clásicos que comparten el ámbito global y se cargan en orden en `index.html` (sin módulos ni compilación). Si añades uno, añádelo también a `APP_SHELL` en `sw.js`.

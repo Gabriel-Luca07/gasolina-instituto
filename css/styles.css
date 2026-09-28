@@ -193,6 +193,9 @@ button, input, select { font-family: inherit; }
   justify-content: space-between;
 }
 .update-banner .btn { flex-shrink: 0; }
+.backup-banner { background: #92400e; }
+.backup-banner .row-inline { flex-shrink: 0; align-items: center; }
+.backup-banner .icon-btn { color: #fff; }
 
 /* ===================== Main / layout ===================== */
 main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
@@ -391,6 +394,35 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 .item-row-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
 .item-row-actions { display: flex; gap: 2px; flex-shrink: 0; }
 
+/* Personas y coches eliminados (archivados) */
+.archived-tag {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.archived-section { margin-top: 12px; }
+
+.close-reminder-card { border-left: 4px solid var(--accent); font-size: 14px; }
+
+.subheading { font-size: 13.5px; font-weight: 700; color: var(--text-muted); margin: 16px 0 8px; }
+.archived-section summary {
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+.archived-section .item-row { opacity: 0.8; }
+
 .empty-state {
   font-size: 13.5px;
   color: var(--text-muted);
@@ -498,7 +530,7 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 .summary-item-value { font-weight: 700; font-size: 14.5px; white-space: nowrap; }
 
 .summary-item-bar { flex-direction: column; align-items: stretch; gap: 0; }
-.summary-item-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.summary-item-row { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .person-bar-track { height: 6px; background: var(--bg-elevated); border-radius: 999px; margin-top: 8px; overflow: hidden; }
 .person-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--primary), var(--accent)); }
 

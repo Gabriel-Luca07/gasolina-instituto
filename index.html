@@ -44,6 +44,14 @@
   <button type="button" id="updateReloadBtn" class="btn btn-sm btn-primary">Actualizar</button>
 </div>
 
+<div id="backupBanner" class="ios-banner update-banner backup-banner hidden">
+  <span id="backupBannerText"></span>
+  <div class="row-inline">
+    <button type="button" id="backupNowBtn" class="btn btn-sm btn-primary">Exportar</button>
+    <button type="button" id="backupLaterBtn" class="icon-btn" aria-label="Recordar más tarde">✕</button>
+  </div>
+</div>
+
 <main id="mainContent">
 
   <!-- ===================== REGISTRO ===================== -->
@@ -52,6 +60,14 @@
     <div id="onboardingCard" class="card onboarding-card hidden">
       <h2>👋 Bienvenido a Gastos Coche</h2>
       <div id="onboardingSteps"></div>
+    </div>
+
+    <div id="closeReminderCard" class="card close-reminder-card hidden">
+      <p id="closeReminderText" style="margin:0 0 10px;"></p>
+      <div class="row-inline">
+        <button type="button" id="closeReminderGoBtn" class="btn btn-primary btn-sm">Ver resumen</button>
+        <button type="button" id="closeReminderLaterBtn" class="btn btn-secondary btn-sm">Más tarde</button>
+      </div>
     </div>
 
     <div id="registroDashboard" class="summary-hero"></div>
@@ -108,6 +124,7 @@
       </div>
       <div id="peopleList" class="item-list"></div>
       <p id="peopleEmptyState" class="empty-state hidden">Añade a las personas del grupo.</p>
+      <div id="archivedPeople" class="hidden"></div>
     </div>
 
     <div class="card">
@@ -117,6 +134,7 @@
       </div>
       <div id="carsList" class="item-list"></div>
       <p id="carsEmptyState" class="empty-state hidden">Añade personas primero y luego los coches del grupo.</p>
+      <div id="archivedCars" class="hidden"></div>
     </div>
 
     <div class="card">
@@ -126,6 +144,16 @@
         <input type="number" id="globalPriceInput" class="input" inputmode="decimal" step="0.001" min="0" placeholder="1.650">
       </label>
       <p class="hint">Cada coche puede tener su propio precio si repostáis en gasolineras distintas (edítalo en el coche).</p>
+    </div>
+
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Repostajes</h2>
+        <button type="button" class="btn btn-primary btn-sm" id="addRefuelBtn">+ Añadir</button>
+      </div>
+      <div id="refuelsList" class="item-list"></div>
+      <p id="refuelsEmptyState" class="empty-state hidden">Apunta el ticket de la gasolinera (litros e importe) y el coche usará ese precio real en los trayectos nuevos.</p>
+      <div id="realConsumption" class="hidden"></div>
     </div>
 
     <div class="card">
@@ -144,6 +172,15 @@
         <span>El conductor paga su parte de cada trayecto</span>
       </label>
       <p class="hint">Si lo desactivas, el conductor no paga cuando también marcas que iba en el coche: solo pagan los demás pasajeros.</p>
+      <label class="field" style="margin-top:12px;">
+        <span>Recordar cerrar el periodo tras</span>
+        <select id="closeReminderSelect" class="input">
+          <option value="7">1 semana</option>
+          <option value="14">2 semanas</option>
+          <option value="30">1 mes</option>
+          <option value="0">No recordar</option>
+        </select>
+      </label>
     </div>
 
     <div class="card">
@@ -154,6 +191,7 @@
     <div class="card">
       <h2>Datos</h2>
       <p class="hint">Todo se guarda solo en este dispositivo. Exporta una copia de seguridad de vez en cuando.</p>
+      <p class="hint" id="lastBackupInfo"></p>
       <div class="row-inline wrap">
         <button type="button" class="btn btn-secondary" id="exportDataBtn">⬇️ Exportar JSON</button>
         <button type="button" class="btn btn-secondary" id="importDataBtn">⬆️ Importar JSON</button>
@@ -217,6 +255,16 @@
   </div>
 </div>
 
+<!-- Scripts clásicos (comparten ámbito global), en orden de dependencia:
+     app.js va el último porque arranca la app. -->
+<script src="js/utils.js"></script>
+<script src="js/state.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/calc.js"></script>
+<script src="js/registro.js"></script>
+<script src="js/resumen.js"></script>
+<script src="js/historial.js"></script>
+<script src="js/config.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

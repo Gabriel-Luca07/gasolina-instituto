@@ -1,0 +1,30 @@
+#!/bin/sh
+# Sube CACHE_VERSION en sw.js en cada commit que cambie archivos de la app.
+# Sin esto, los móviles con la app instalada siguen sirviendo la versión en
+# caché y nunca ven el aviso "Actualizar".
+#
+# Se activa una vez por clon con:  git config core.hooksPath .githooks
+
+changed=$(git diff --cached --name-only --diff-filter=ACMRD | grep -E '^(index\.html|manifest\.json|css/|js/|icons/)')
+[ -z "$changed" ] && exit 0
+
+version_of() {
+  sed -n "s/^const CACHE_VERSION = 'gasolina-v\([0-9][0-9]*\)';.*/\1/p"
+}
+
+current=$(git show :sw.js 2>/dev/null | version_of)
+if [ -z "$current" ]; then
+  echo "pre-commit: no encuentro CACHE_VERSION en sw.js" >&2
+  exit 1
+fi
+
+# Si ya se subió a mano en este commit, no se toca.
+previous=$(git show HEAD:sw.js 2>/dev/null | version_of)
+if [ -n "$previous" ] && [ "$current" != "$previous" ]; then
+  exit 0
+fi
+
+next=$((current + 1))
+sed -i "s/^const CACHE_VERSION = 'gasolina-v$current';/const CACHE_VERSION = 'gasolina-v$next';/" sw.js
+git add sw.js
+echo "pre-commit: CACHE_VERSION gasolina-v$current -> gasolina-v$next"

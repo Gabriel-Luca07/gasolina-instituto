@@ -1,0 +1,2 @@
+# El hook lo ejecuta sh: con finales de línea CRLF dejaría de funcionar.
+.githooks/* text eol=lf

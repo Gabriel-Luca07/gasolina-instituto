@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pruebas · Gastos Coche</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 760px; padding: 16px; background: #f8fafc; color: #0f172a; }
+  h1 { font-size: 20px; }
+  #summary { padding: 10px 14px; border-radius: 8px; font-weight: 700; }
+  .ok { background: #dcfce7; color: #14532d; }
+  .fail { background: #fee2e2; color: #7f1d1d; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 4px 8px; border-bottom: 1px solid #e2e8f0; }
+  li.fail pre { margin: 4px 0 0; white-space: pre-wrap; font-size: 12.5px; }
+  @media (prefers-color-scheme: dark) { body { background: #0f172a; color: #e2e8f0; } li { border-color: #334155; } }
+</style>
+</head>
+<body>
+<h1>Pruebas del cálculo · Gastos Coche</h1>
+<p>Prueban <code>js/calc.js</code> con datos inventados: no leen ni modifican tus datos guardados.</p>
+<div id="summary">Ejecutando…</div>
+<ul id="results"></ul>
+
+<!-- Solo el código sin DOM: utilidades, estado y cálculo. -->
+<script src="js/utils.js"></script>
+<script src="js/state.js"></script>
+<script src="js/calc.js"></script>
+<script src="tests/calc.test.js"></script>
+</body>
+</html>
