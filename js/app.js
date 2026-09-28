@@ -259,6 +259,62 @@ qs('#tabbar').addEventListener('click', (e) => {
   if (btn) switchTab(btn.dataset.tab);
 });
 
+/* -------- Deslizar con el dedo para cambiar de pestaña -------- */
+(function setupSwipeNavigation() {
+  const main = qs('#mainContent');
+  const SWIPE_MIN_DISTANCE = 60; // px mínimos para contar como swipe, no como un toque tembloroso
+  const SWIPE_MAX_OFF_AXIS_RATIO = 0.5; // el movimiento vertical no puede superar la mitad del horizontal
+  const SWIPE_MAX_TIME = 700; // ms: pasado esto, es un gesto lento (arrastrar, no deslizar) y lo ignoramos
+  let startX = 0, startY = 0, startTime = 0, tracking = false;
+
+  main.addEventListener('touchstart', (e) => {
+    tracking = false;
+    if (!qs('#modalOverlay').classList.contains('hidden')) return;
+    if (!qs('#lockScreen').classList.contains('hidden')) return;
+    // El gráfico de Historial tiene su propio scroll horizontal, y los campos
+    // de texto/número necesitan poder arrastrar el cursor sin que eso cambie
+    // de pestaña.
+    if (e.target.closest('.chart-bars, input, select, textarea')) return;
+    const t = e.touches[0];
+    startX = t.clientX;
+    startY = t.clientY;
+    startTime = Date.now();
+    tracking = true;
+  }, { passive: true });
+
+  main.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    const t = e.touches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    // En cuanto quede claro que el gesto es un scroll vertical (el caso más
+    // común con diferencia), dejamos de vigilarlo: no hace falta esperar a
+    // touchend para saber que esto no es un swipe de pestaña.
+    if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) tracking = false;
+  }, { passive: true });
+
+  main.addEventListener('touchend', (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    const dt = Date.now() - startTime;
+    if (dt > SWIPE_MAX_TIME) return;
+    if (Math.abs(dx) < SWIPE_MIN_DISTANCE) return;
+    if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_OFF_AXIS_RATIO) return;
+
+    const currentTab = qs('.tab-btn.active')?.dataset.tab;
+    const idx = TAB_ORDER.indexOf(currentTab);
+    if (idx === -1) return;
+    if (dx < 0 && idx < TAB_ORDER.length - 1) {
+      switchTab(TAB_ORDER[idx + 1]); // dedo hacia la izquierda -> siguiente pestaña
+    } else if (dx > 0 && idx > 0) {
+      switchTab(TAB_ORDER[idx - 1]); // dedo hacia la derecha -> pestaña anterior
+    }
+  }, { passive: true });
+})();
+
 /* =====================================================================
    CÁLCULO
    ===================================================================== */
