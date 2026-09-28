@@ -65,7 +65,8 @@ function createDefaultState() {
     period: { id: uid(), createdAt: todayISO(), days: [] },
     history: [],
     lastTrip: null,
-    theme: 'auto'
+    theme: 'auto',
+    pin: null
   };
 }
 
@@ -84,6 +85,7 @@ function loadState() {
     if (typeof parsed.globalPrice !== 'number') parsed.globalPrice = 1.65;
     if (typeof parsed.driverPays !== 'boolean') parsed.driverPays = true;
     if (!['auto', 'light', 'dark'].includes(parsed.theme)) parsed.theme = 'auto';
+    if (!(/^\d{4}$/.test(parsed.pin))) parsed.pin = null;
     return parsed;
   } catch (e) {
     console.error('Estado corrupto, se reinicia', e);
@@ -666,10 +668,17 @@ function renderRegistroDashboard() {
   }
 
   const topDebt = (summary.pairwiseDebts || [])[0];
+  const OPEN_PERIOD_WARN_DAYS = 10;
+  const daysOpen = Math.round((parseISODate(todayISO()) - parseISODate(state.period.createdAt)) / 86400000);
+  const staleWarning = daysOpen >= OPEN_PERIOD_WARN_DAYS
+    ? `<div class="dashboard-stale-notice">⏳ Llevas ${daysOpen} días con este periodo abierto. Considera cerrarlo desde Resumen para no acumular demasiado.</div>`
+    : '';
+
   el.innerHTML = `
     <div class="summary-hero-label">PRESUPUESTO DE ESTE PERIODO</div>
     <div class="summary-hero-value">${esc(formatEUR(summary.totalCost))}</div>
     <div class="summary-hero-sub">${summary.dayCount} día(s) · ${summary.tripCount} trayecto(s)${topDebt ? ` · ${esc(topDebt.from)} debe ${esc(formatEUR(topDebt.amount))} a ${esc(topDebt.to)}` : ''}</div>
+    ${staleWarning}
     <button type="button" class="dashboard-link-btn" id="dashboardGoToResumenBtn">Ver resumen completo →</button>`;
 
   qs('#dashboardGoToResumenBtn').addEventListener('click', () => switchTab('resumen'));
@@ -685,7 +694,7 @@ function renderRegistro() {
   container.innerHTML = days.map((day, idx) => {
     const dayCost = day.trips.reduce((sum, t) => sum + computeTripDisplayCost(t), 0);
     const tripsHTML = day.trips.length
-      ? day.trips.map((trip) => renderTripRow(day, trip)).join('')
+      ? day.trips.map((trip, idx) => renderTripRow(day, trip, idx)).join('')
       : '<p class="hint" style="margin:4px 0 10px;">Sin trayectos este día todavía.</p>';
 
     return `
@@ -708,7 +717,7 @@ function renderRegistro() {
   }).join('');
 }
 
-function renderTripRow(day, trip) {
+function renderTripRow(day, trip, idx) {
   const car = state.cars.find((c) => c.id === trip.carId);
   if (!car) {
     return `<div class="trip-row"><em class="hint">Coche eliminado. <button type="button" class="icon-btn danger" data-action="remove-trip" data-trip-id="${trip.id}">🗑</button></em></div>`;
@@ -745,11 +754,26 @@ function renderTripRow(day, trip) {
       </div>
       <div class="trip-row-people">${peopleHTML}</div>
       <div class="trip-row-buttons">
+        ${day.trips.length > 1 ? `
+          <button type="button" class="icon-btn reorder-btn" data-action="move-trip-up" ${idx === 0 ? 'disabled' : ''} title="Subir">▲</button>
+          <button type="button" class="icon-btn reorder-btn" data-action="move-trip-down" ${idx === day.trips.length - 1 ? 'disabled' : ''} title="Bajar">▼</button>
+        ` : ''}
         <button type="button" class="btn btn-secondary btn-sm" data-action="edit-trip">Editar</button>
         <button type="button" class="btn btn-secondary btn-sm" data-action="duplicate-trip">Duplicar</button>
         <button type="button" class="btn btn-secondary btn-sm" data-action="remove-trip">Eliminar</button>
       </div>
     </div>`;
+}
+
+function moveTrip(dayId, tripId, direction) {
+  const day = state.period.days.find((d) => d.id === dayId);
+  if (!day) return;
+  const idx = day.trips.findIndex((t) => t.id === tripId);
+  const targetIdx = idx + direction;
+  if (idx === -1 || targetIdx < 0 || targetIdx >= day.trips.length) return;
+  [day.trips[idx], day.trips[targetIdx]] = [day.trips[targetIdx], day.trips[idx]];
+  saveState();
+  renderRegistro();
 }
 
 qs('#dayList').addEventListener('click', (e) => {
@@ -765,6 +789,8 @@ qs('#dayList').addEventListener('click', (e) => {
   if (action === 'edit-trip') return openTripModal(dayId, e.target.closest('.trip-row').dataset.tripId);
   if (action === 'duplicate-trip') return duplicateTrip(dayId, e.target.closest('.trip-row').dataset.tripId);
   if (action === 'remove-trip') return removeTrip(dayId, e.target.closest('.trip-row')?.dataset.tripId || e.target.dataset.tripId);
+  if (action === 'move-trip-up') return moveTrip(dayId, e.target.closest('.trip-row').dataset.tripId, -1);
+  if (action === 'move-trip-down') return moveTrip(dayId, e.target.closest('.trip-row').dataset.tripId, 1);
 });
 
 function cloneTrip(t) {
@@ -1000,7 +1026,11 @@ function openTripModal(dayId, tripId, batchDates) {
         });
       }
 
-      qs('#wizardSaveBtn').addEventListener('click', () => {
+      qs('#wizardSaveBtn').addEventListener('click', (e) => {
+        // Un doble toque rápido no debe crear el trayecto dos veces: este
+        // paso no tiene validaciones que puedan fallar, así que es seguro
+        // deshabilitar el botón nada más pulsarlo.
+        e.target.disabled = true;
         const passengerIds = qsa('#wizardOutboundPassengers input[type="checkbox"]:checked').map((cb) => cb.value);
         const returnPassengerIds = selection.roundTrip
           ? (sameReturnUI ? [...passengerIds] : qsa('#wizardReturnPassengers input[type="checkbox"]:checked').map((cb) => cb.value))
@@ -1064,6 +1094,7 @@ function openTripModal(dayId, tripId, batchDates) {
 
 function renderSummaryBlocksHTML(summary, opts) {
   const interactive = !!(opts && opts.interactive);
+  const personBars = !!(opts && opts.personBars);
 
   if (summary.tripCount === 0) {
     return `<p class="empty-state">Este periodo todavía no tiene trayectos registrados.</p>`;
@@ -1078,10 +1109,17 @@ function renderSummaryBlocksHTML(summary, opts) {
       <div class="summary-item-value">${esc(formatEUR(c.totalCost))}</div>
     </div>`).join('');
 
+  // En el acumulado de Historial mostramos además una barra de progreso bajo
+  // cada persona, para ver de un vistazo quién ha gastado más a lo largo del
+  // tiempo (no solo el número).
+  const maxShare = Math.max(...summary.perPerson.map((p) => p.share), 0.01);
   const peopleHTML = summary.perPerson.map((p) => `
-    <div class="summary-item">
-      <div class="summary-item-name">${esc(p.name)}</div>
-      <div class="summary-item-value">${esc(formatEUR(p.share))}</div>
+    <div class="summary-item ${personBars ? 'summary-item-bar' : ''}">
+      <div class="summary-item-row">
+        <div class="summary-item-name">${esc(p.name)}</div>
+        <div class="summary-item-value">${esc(formatEUR(p.share))}</div>
+      </div>
+      ${personBars ? `<div class="person-bar-track"><div class="person-bar-fill" style="width:${Math.max(4, Math.round(p.share / maxShare * 100))}%;"></div></div>` : ''}
     </div>`).join('');
 
   // El botón para marcar una deuda como pagada solo tiene sentido en el
@@ -1126,10 +1164,13 @@ function openSettleModal(fromId, toId, fromName, toName, maxAmount) {
     <button type="button" class="btn btn-primary btn-block" id="settleSaveBtn">Marcar como pagada</button>
   `;
   openModal('Registrar pago', html);
-  qs('#settleSaveBtn').addEventListener('click', () => {
+  qs('#settleSaveBtn').addEventListener('click', (e) => {
     const amount = parseFloat(qs('#settleAmountInput').value);
     if (!amount || amount <= 0) { showToast('Introduce un importe válido'); return; }
     if (amount > maxAmount + 0.01) { showToast('No puede ser más que la deuda actual'); return; }
+    // Solo se deshabilita una vez pasa la validación: si se deshabilitara
+    // antes, un intento fallido dejaría el botón inutilizable para reintentar.
+    e.target.disabled = true;
     closeModal();
     settleDebt(fromId, toId, amount);
   });
@@ -1303,7 +1344,7 @@ function renderHistorial() {
         <div class="summary-hero-sub">${aggregate.dayCount} día(s) con trayectos · ${aggregate.tripCount} trayecto(s) en total</div>
       </div>
       ${renderHistoryChartHTML()}
-      ${renderSummaryBlocksHTML(aggregate)}`;
+      ${renderSummaryBlocksHTML(aggregate, { personBars: true })}`;
   } else {
     aggregateContainer.classList.add('hidden');
     aggregateContainer.innerHTML = '';
@@ -1408,9 +1449,10 @@ function openPersonModal(person) {
     <button type="button" class="btn btn-primary btn-block" id="personSaveBtn">Guardar</button>
   `;
   openModal(person ? 'Editar persona' : 'Añadir persona', html);
-  qs('#personSaveBtn').addEventListener('click', () => {
+  qs('#personSaveBtn').addEventListener('click', (e) => {
     const name = qs('#personNameInput').value.trim();
     if (!name) { showToast('Escribe un nombre'); return; }
+    e.target.disabled = true;
     if (person) {
       person.name = name;
     } else {
@@ -1522,7 +1564,7 @@ function openCarModal(car) {
     qs('#carOwnPriceField').classList.toggle('hidden', !e.target.checked);
   });
 
-  qs('#carSaveBtn').addEventListener('click', () => {
+  qs('#carSaveBtn').addEventListener('click', (e) => {
     const name = qs('#carNameInput').value.trim();
     const driverId = qs('#carDriverSelect').value;
     const consumption = parseFloat(qs('#carConsumptionInput').value);
@@ -1532,6 +1574,7 @@ function openCarModal(car) {
     if (!driverId) { showToast('Elige un conductor'); return; }
     if (!consumption || consumption <= 0) { showToast('Introduce un consumo válido'); return; }
     if (useOwnPrice && (!ownPrice || ownPrice <= 0)) { showToast('Introduce un precio propio válido'); return; }
+    e.target.disabled = true;
 
     if (car) {
       Object.assign(car, { name, driverId, consumption, useOwnPrice, ownPrice: useOwnPrice ? ownPrice : null });
@@ -1571,6 +1614,7 @@ function deleteCar(car) {
 function renderConfigMisc() {
   qs('#globalPriceInput').value = state.globalPrice;
   qs('#driverPaysToggle').checked = state.driverPays;
+  renderSecurityCard();
 }
 
 qs('#globalPriceInput').addEventListener('change', (e) => {
@@ -1630,11 +1674,12 @@ function openSavedTripModal(trip) {
     <button type="button" class="btn btn-primary btn-block" id="savedSaveBtn">Guardar</button>
   `;
   openModal(trip ? 'Editar trayecto guardado' : 'Añadir trayecto guardado', html);
-  qs('#savedSaveBtn').addEventListener('click', () => {
+  qs('#savedSaveBtn').addEventListener('click', (e) => {
     const name = qs('#savedNameInput').value.trim();
     const km = parseFloat(qs('#savedKmInput').value);
     if (!name) { showToast('Escribe un nombre'); return; }
     if (!km || km <= 0) { showToast('Introduce unos km válidos'); return; }
+    e.target.disabled = true;
     if (trip) {
       trip.name = name; trip.km = km;
     } else {
@@ -1666,7 +1711,10 @@ function deleteSavedTrip(trip) {
    ===================================================================== */
 
 qs('#exportDataBtn').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  // El PIN no se incluye en la copia de seguridad: si se comparte o se sube
+  // a otro sitio, no debería llevarse el candado de este dispositivo consigo.
+  const exportState = { ...state, pin: undefined };
+  const blob = new Blob([JSON.stringify(exportState, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1791,7 +1839,11 @@ function sanitizeImportedState(raw) {
       period,
       history,
       lastTrip: null,
-      theme: ['auto', 'light', 'dark'].includes(raw.theme) ? raw.theme : 'auto'
+      theme: ['auto', 'light', 'dark'].includes(raw.theme) ? raw.theme : 'auto',
+      // El PIN nunca se restaura desde un archivo importado: si el backup se
+      // comparte o se guarda en otro sitio, no queremos propagar (ni
+      // bloquear al usuario con) un PIN que no acaba de teclear él mismo.
+      pin: null
     },
     issues
   };
@@ -1833,6 +1885,7 @@ qs('#importFileInput').addEventListener('change', (e) => {
         state = importedState;
         saveState();
         renderAll();
+        updateLockButtonVisibility();
         switchTab('registro');
         showToast('Datos importados');
         if (issues.length) console.warn('Avisos al importar datos:', issues);
@@ -1853,6 +1906,7 @@ qs('#resetDataBtn').addEventListener('click', () => {
       state = createDefaultState();
       saveState();
       renderAll();
+      updateLockButtonVisibility();
       switchTab('registro');
       showToast('Datos borrados');
     }
@@ -1887,6 +1941,123 @@ function setupThemeToggle() {
     applyTheme();
     showToast(`Tema: ${THEME_LABELS[state.theme]}`);
   });
+}
+
+/* =====================================================================
+   Bloqueo con PIN (candado local, no es cifrado real de los datos: solo
+   evita que alguien abra la app sin más en este dispositivo)
+   ===================================================================== */
+
+function renderSecurityCard() {
+  const el = qs('#securityPinStatus');
+  if (state.pin) {
+    el.innerHTML = `
+      <p class="hint" style="margin:0 0 10px;">La app pide un PIN de 4 dígitos al abrirla en este dispositivo.</p>
+      <button type="button" class="btn btn-secondary btn-block" id="changePinBtn">Cambiar PIN</button>
+      <button type="button" class="btn btn-danger" id="removePinBtn">Quitar PIN</button>`;
+    qs('#changePinBtn').addEventListener('click', () => openSetPinModal());
+    qs('#removePinBtn').addEventListener('click', () => openRemovePinModal());
+  } else {
+    el.innerHTML = `
+      <p class="hint" style="margin:0 0 10px;">Añade un PIN de 4 dígitos para que nadie abra la app sin más. Se guarda solo en este dispositivo (no viaja en las copias de seguridad) y no es un cifrado real de los datos.</p>
+      <button type="button" class="btn btn-primary" id="setPinBtn">Activar PIN</button>`;
+    qs('#setPinBtn').addEventListener('click', () => openSetPinModal());
+  }
+}
+
+function openSetPinModal() {
+  const html = `
+    <label class="field">
+      <span>Elige un PIN de 4 dígitos</span>
+      <input type="password" id="newPinInput1" class="input" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="••••">
+    </label>
+    <label class="field">
+      <span>Repite el PIN</span>
+      <input type="password" id="newPinInput2" class="input" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="••••">
+    </label>
+    <button type="button" class="btn btn-primary btn-block" id="newPinSaveBtn">${state.pin ? 'Cambiar PIN' : 'Activar PIN'}</button>
+  `;
+  openModal(state.pin ? 'Cambiar PIN' : 'Activar PIN', html);
+  qs('#newPinSaveBtn').addEventListener('click', (e) => {
+    const p1 = qs('#newPinInput1').value.trim();
+    const p2 = qs('#newPinInput2').value.trim();
+    if (!/^\d{4}$/.test(p1)) { showToast('El PIN debe tener 4 dígitos'); return; }
+    if (p1 !== p2) { showToast('Los dos PIN no coinciden'); return; }
+    e.target.disabled = true;
+    state.pin = p1;
+    saveState();
+    closeModal();
+    renderSecurityCard();
+    updateLockButtonVisibility();
+    showToast('PIN guardado');
+  });
+}
+
+function openRemovePinModal() {
+  confirmModal({
+    title: 'Quitar PIN',
+    message: 'La app dejará de pedir un PIN al abrirla en este dispositivo. ¿Continuar?',
+    confirmLabel: 'Quitar PIN',
+    danger: true,
+    onConfirm: () => {
+      state.pin = null;
+      saveState();
+      renderSecurityCard();
+      updateLockButtonVisibility();
+      showToast('PIN desactivado');
+    }
+  });
+}
+
+function updateLockButtonVisibility() {
+  qs('#lockNowBtn').classList.toggle('hidden', !state.pin);
+}
+
+// Con la pantalla de bloqueo solo tapada por CSS, alguien con teclado podría
+// tabular "a través" de ella hasta los botones de la app de detrás (el
+// z-index no afecta el orden de tabulación). `inert` los saca del todo del
+// alcance del teclado (y del resto de interacción) mientras está bloqueada.
+function setAppInert(isInert) {
+  [qs('#mainContent'), qs('#tabbar'), qs('.app-header')].forEach((el) => {
+    if (!el) return;
+    if (isInert) el.setAttribute('inert', ''); else el.removeAttribute('inert');
+  });
+}
+
+function showLockScreen() {
+  closeModal();
+  setAppInert(true);
+  const screen = qs('#lockScreen');
+  const input = qs('#lockPinInput');
+  qs('#lockError').classList.add('hidden');
+  input.value = '';
+  screen.classList.remove('hidden');
+  setTimeout(() => input.focus(), 50);
+}
+
+function attemptUnlock() {
+  const input = qs('#lockPinInput');
+  if (input.value === state.pin) {
+    qs('#lockScreen').classList.add('hidden');
+    input.value = '';
+    setAppInert(false);
+    return;
+  }
+  const box = qs('.lock-box');
+  qs('#lockError').classList.remove('hidden');
+  box.classList.remove('shake');
+  void box.offsetWidth; // reinicia la animación si ya se había disparado
+  box.classList.add('shake');
+  input.value = '';
+  input.focus();
+}
+
+function setupLockScreen() {
+  updateLockButtonVisibility();
+  if (state.pin) showLockScreen();
+  qs('#lockUnlockBtn').addEventListener('click', attemptUnlock);
+  qs('#lockPinInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptUnlock(); });
+  qs('#lockNowBtn').addEventListener('click', showLockScreen);
 }
 
 /* =====================================================================
@@ -1966,4 +2137,5 @@ function renderAll() {
 setupThemeToggle();
 renderAll();
 setupIosBanner();
+setupLockScreen();
 registerServiceWorker();

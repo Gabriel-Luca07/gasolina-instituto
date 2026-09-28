@@ -155,6 +155,8 @@ button, input, select { font-family: inherit; }
 }
 .theme-toggle-btn:active { transform: scale(0.88) rotate(-10deg); }
 
+.lock-now-btn { width: 34px; height: 34px; font-size: 15px; border: 1px solid var(--border); }
+
 .period-badge {
   font-size: 12px;
   font-weight: 600;
@@ -425,8 +427,11 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 .trip-row-meta { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
 .trip-row-cost { font-weight: 700; color: var(--primary); font-size: 14px; white-space: nowrap; }
 .trip-row-people { font-size: 12.5px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
-.trip-row-buttons { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.trip-row-buttons { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 .trip-row-buttons .btn { flex: 1; min-width: 90px; }
+.reorder-btn { width: 30px; height: 30px; font-size: 12px; border: 1.5px solid var(--border); flex-shrink: 0; }
+.reorder-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.reorder-btn:disabled:active { background: transparent; }
 
 .add-trip-btn { margin-top: 4px; }
 
@@ -458,6 +463,16 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 }
 .dashboard-link-btn:active { background: rgba(255, 255, 255, 0.28); }
 
+.dashboard-stale-notice {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.14);
+  border-left: 3px solid #fbbf24;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .summary-list { display: flex; flex-direction: column; gap: 8px; }
 .summary-item {
   display: flex;
@@ -471,6 +486,11 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 .summary-item-name { font-weight: 700; font-size: 14px; }
 .summary-item-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .summary-item-value { font-weight: 700; font-size: 14.5px; white-space: nowrap; }
+
+.summary-item-bar { flex-direction: column; align-items: stretch; gap: 0; }
+.summary-item-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.person-bar-track { height: 6px; background: var(--bg-elevated); border-radius: 999px; margin-top: 8px; overflow: hidden; }
+.person-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--primary), var(--accent)); }
 
 .debt-item {
   display: flex;
@@ -710,3 +730,56 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
 .text-muted { color: var(--text-muted); }
 .text-center { text-align: center; }
 .mt-8 { margin-top: 8px; }
+
+/* ===================== Vista de escritorio ===================== */
+/* En pantallas anchas, la cabecera y la barra de pestañas (position: fixed,
+   left/right: 0) se estiraban a todo el ancho del viewport mientras que
+   <main> ya iba centrado con max-width. Aquí las alineamos con esa misma
+   columna de 640px, en vez de dejarlas estiradas de borde a borde. */
+@media (min-width: 700px) {
+  .app-header, .tabbar {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 640px;
+  }
+  .app-header, main, .tabbar {
+    box-shadow: -1px 0 0 var(--border), 1px 0 0 var(--border);
+  }
+  .ios-banner {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+}
+
+/* ===================== Pantalla de bloqueo ===================== */
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.lock-box { width: 100%; max-width: 300px; text-align: center; }
+.lock-icon { font-size: 40px; margin-bottom: 8px; }
+.lock-box h2 { font-size: 19px; margin-bottom: 4px; }
+.lock-pin-input {
+  text-align: center;
+  font-size: 26px;
+  letter-spacing: 12px;
+  margin: 18px 0 10px;
+  padding-left: 22px;
+}
+.lock-error { color: var(--danger); font-size: 13px; margin: 0 0 12px; min-height: 16px; }
+.lock-error.hidden { display: none; }
+@keyframes lockShake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(4px); }
+  30%, 50%, 70% { transform: translateX(-8px); }
+  40%, 60% { transform: translateX(8px); }
+}
+.lock-box.shake { animation: lockShake 0.4s; }
