@@ -260,6 +260,17 @@ qs('#tabbar').addEventListener('click', (e) => {
 });
 
 /* -------- Deslizar con el dedo para cambiar de pestaña -------- */
+// Compartida por el gesto táctil y los atajos de teclado: mueve a la pestaña
+// anterior/siguiente según TAB_ORDER, sin salirse por los extremos.
+function goToAdjacentTab(direction) {
+  const currentTab = qs('.tab-btn.active')?.dataset.tab;
+  const idx = TAB_ORDER.indexOf(currentTab);
+  if (idx === -1) return;
+  const nextIdx = idx + direction;
+  if (nextIdx < 0 || nextIdx >= TAB_ORDER.length) return;
+  switchTab(TAB_ORDER[nextIdx]);
+}
+
 (function setupSwipeNavigation() {
   const main = qs('#mainContent');
   const SWIPE_MIN_DISTANCE = 60; // px mínimos para contar como swipe, no como un toque tembloroso
@@ -304,16 +315,21 @@ qs('#tabbar').addEventListener('click', (e) => {
     if (Math.abs(dx) < SWIPE_MIN_DISTANCE) return;
     if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_OFF_AXIS_RATIO) return;
 
-    const currentTab = qs('.tab-btn.active')?.dataset.tab;
-    const idx = TAB_ORDER.indexOf(currentTab);
-    if (idx === -1) return;
-    if (dx < 0 && idx < TAB_ORDER.length - 1) {
-      switchTab(TAB_ORDER[idx + 1]); // dedo hacia la izquierda -> siguiente pestaña
-    } else if (dx > 0 && idx > 0) {
-      switchTab(TAB_ORDER[idx - 1]); // dedo hacia la derecha -> pestaña anterior
-    }
+    if (dx < 0) goToAdjacentTab(1); // dedo hacia la izquierda -> siguiente pestaña
+    else goToAdjacentTab(-1); // dedo hacia la derecha -> pestaña anterior
   }, { passive: true });
 })();
+
+/* -------- Flechas del teclado para cambiar de pestaña (escritorio) -------- */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  // No interferir con mover el cursor dentro de un campo de texto/número,
+  // ni mientras hay un modal o la pantalla de bloqueo por encima.
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+  if (!qs('#modalOverlay').classList.contains('hidden')) return;
+  if (!qs('#lockScreen').classList.contains('hidden')) return;
+  goToAdjacentTab(e.key === 'ArrowRight' ? 1 : -1);
+});
 
 /* =====================================================================
    CÁLCULO
@@ -370,9 +386,15 @@ function computePeriodSummary(period) {
         let splitSet = new Set((legPassengerIds || []).filter((id) => state.people.some((p) => p.id === id)));
         if (state.driverPays) splitSet.add(car.driverId);
         if (splitSet.size === 0) splitSet.add(car.driverId);
-        const share = cost / splitSet.size;
+
+        // Reparto por "partes": quien no tenga un peso propio en trip.weights
+        // cuenta como 1 parte (el reparto a partes iguales de siempre). Con
+        // pesos iguales para todos esto da exactamente lo mismo que antes.
+        const weights = trip.weights || {};
+        const totalWeight = [...splitSet].reduce((sum, pid) => sum + (weights[pid] || 1), 0);
 
         splitSet.forEach((pid) => {
+          const share = cost * (weights[pid] || 1) / totalWeight;
           if (shareMap.has(pid)) shareMap.set(pid, shareMap.get(pid) + share);
           if (pid !== car.driverId && state.people.some((p) => p.id === pid)) {
             const key = `${pid}|${car.driverId}`;
@@ -429,11 +451,13 @@ function computePeriodSummary(period) {
       : { from: p.bName, to: p.aName, fromId: p.bId, toId: p.aId, amount: -p.amount }))
     .sort((a, b) => b.amount - a.amount);
 
-  return { totalCost, tripCount, dayCount, perCar, perPerson, pairwiseBalances, pairwiseDebts };
+  const totalKm = perCar.reduce((sum, c) => sum + (c.totalKm || 0), 0);
+
+  return { totalCost, tripCount, dayCount, totalKm, perCar, perPerson, pairwiseBalances, pairwiseDebts };
 }
 
 function computeHistoryAggregate() {
-  const totals = { totalCost: 0, tripCount: 0, dayCount: 0 };
+  const totals = { totalCost: 0, tripCount: 0, dayCount: 0, totalKm: 0 };
   const carAgg = new Map();
   const personShare = new Map();
   const pairAgg = new Map(); // "aId|bId" (orden fijo) -> {aId,bId,aName,bName,amount}
@@ -443,6 +467,9 @@ function computeHistoryAggregate() {
     totals.totalCost += s.totalCost || 0;
     totals.tripCount += s.tripCount || 0;
     totals.dayCount += s.dayCount || 0;
+    // Los periodos cerrados antes de tener este campo no lo llevan: lo
+    // recalculamos sumando los km por coche, que sí existían desde el principio.
+    totals.totalKm += (typeof s.totalKm === 'number' ? s.totalKm : (s.perCar || []).reduce((sum, c) => sum + (c.totalKm || 0), 0));
 
     (s.perCar || []).forEach((c) => {
       const cur = carAgg.get(c.carId) || { name: c.name, driverName: c.driverName, totalCost: 0, totalKm: 0, tripCount: 0 };
@@ -740,7 +767,40 @@ function renderRegistroDashboard() {
   qs('#dashboardGoToResumenBtn').addEventListener('click', () => switchTab('resumen'));
 }
 
+// La primera vez que se abre la app (sin personas ni coches), el dashboard y
+// los botones de "añadir día/trayecto" no sirven de nada todavía y solo
+// confunden. En su lugar, se guía a crear primero una persona y luego un
+// coche, paso a paso, antes de mostrar el Registro normal.
+function renderOnboarding() {
+  const card = qs('#onboardingCard');
+  const needsPerson = state.people.length === 0;
+  const needsCar = !needsPerson && state.cars.length === 0;
+  const show = needsPerson || needsCar;
+
+  card.classList.toggle('hidden', !show);
+  qs('#registroDashboard').classList.toggle('hidden', show);
+  qs('#addDayCard').classList.toggle('hidden', show);
+  qs('#dayList').classList.toggle('hidden', show);
+  if (show) qs('#registroEmptyState').classList.add('hidden');
+  if (!show) return false;
+
+  qs('#onboardingSteps').innerHTML = needsPerson ? `
+    <p class="hint" style="margin:0 0 14px;">Para repartir gastos hacen falta al menos una persona y un coche. Empieza añadiendo a las personas del grupo (tú incluido/a).</p>
+    <button type="button" class="btn btn-primary btn-block" id="onboardingAddPersonBtn">1️⃣ Añadir primera persona</button>
+  ` : `
+    <p class="hint" style="margin:0 0 14px;">Ya tienes gente en el grupo. Ahora añade el coche que vais a compartir (y quién lo conduce).</p>
+    <button type="button" class="btn btn-primary btn-block" id="onboardingAddCarBtn">2️⃣ Añadir primer coche</button>
+  `;
+  if (needsPerson) {
+    qs('#onboardingAddPersonBtn').addEventListener('click', () => openPersonModal(null));
+  } else {
+    qs('#onboardingAddCarBtn').addEventListener('click', () => openCarModal(null));
+  }
+  return true;
+}
+
 function renderRegistro() {
+  if (renderOnboarding()) return;
   renderRegistroDashboard();
   renderQuickWeekdays();
   const container = qs('#dayList');
@@ -780,14 +840,19 @@ function renderTripRow(day, trip, idx) {
   }
   const driver = state.people.find((p) => p.id === car.driverId);
   const cost = computeTripDisplayCost(trip);
-  const nameOf = (id) => (state.people.find((p) => p.id === id) || {}).name;
-  const outboundNames = (trip.passengerIds || []).map(nameOf).filter(Boolean);
+  const nameWithWeight = (id) => {
+    const name = (state.people.find((p) => p.id === id) || {}).name;
+    if (!name) return null;
+    const w = trip.weights && trip.weights[id];
+    return w && w > 1 ? `${name} (×${w})` : name;
+  };
+  const outboundNames = (trip.passengerIds || []).map(nameWithWeight).filter(Boolean);
   const driverSuffix = state.driverPays ? ` + ${esc(driver ? driver.name : 'conductor')} (conductor)` : '';
 
   let peopleHTML;
   if (trip.roundTrip) {
     const returnIds = trip.returnPassengerIds || trip.passengerIds || [];
-    const returnNames = returnIds.map(nameOf).filter(Boolean);
+    const returnNames = returnIds.map(nameWithWeight).filter(Boolean);
     const sameBothWays = JSON.stringify([...(trip.passengerIds || [])].sort()) === JSON.stringify([...returnIds].sort());
     peopleHTML = sameBothWays
       ? `<strong>Con:</strong> ${outboundNames.length ? esc(outboundNames.join(', ')) : 'nadie más marcado'}${driverSuffix} (ida y vuelta)`
@@ -857,7 +922,8 @@ function cloneTrip(t) {
     savedTripId: t.savedTripId || null,
     passengerIds: [...(t.passengerIds || [])],
     roundTrip: !!t.roundTrip,
-    returnPassengerIds: t.roundTrip ? [...(t.returnPassengerIds || t.passengerIds || [])] : undefined
+    returnPassengerIds: t.roundTrip ? [...(t.returnPassengerIds || t.passengerIds || [])] : undefined,
+    weights: t.weights ? { ...t.weights } : undefined
   };
 }
 
@@ -909,7 +975,12 @@ function openTripModal(dayId, tripId, batchDates) {
     km: null,
     passengerIds: editing ? [...editing.passengerIds] : validLastPassengers(lastTrip && lastTrip.passengerIds),
     roundTrip: editing ? !!editing.roundTrip : !!(lastTrip && lastTrip.roundTrip),
-    returnPassengerIds: editing ? [...(editing.returnPassengerIds || editing.passengerIds || [])] : validLastPassengers(lastTrip && lastTrip.returnPassengerIds)
+    returnPassengerIds: editing ? [...(editing.returnPassengerIds || editing.passengerIds || [])] : validLastPassengers(lastTrip && lastTrip.returnPassengerIds),
+    // Por defecto el coste se reparte a partes iguales (sin entradas en
+    // weights); el toggle "repartir en partes distintas" es opcional y solo
+    // se activa de entrada si el trayecto que se edita ya tenía pesos.
+    useWeights: editing ? !!(editing.weights && Object.keys(editing.weights).length) : false,
+    weights: editing && editing.weights ? { ...editing.weights } : {}
   };
   if (editing) {
     selection.km = editing.km;
@@ -943,6 +1014,21 @@ function openTripModal(dayId, tripId, batchDates) {
     if (n === 1) return !!selection.carId;
     if (n === 2) return !!selection.km;
     return false;
+  }
+
+  // Los inputs de peso no se guardan en `selection.weights` hasta que se
+  // lee el DOM explícitamente: hay que hacerlo antes de cualquier
+  // renderStep() disparado desde dentro del propio paso 3, o se perderían
+  // los valores que el usuario ya había tecleado.
+  function captureWeightsFromDOM() {
+    // Ida y vuelta comparten el mismo peso por persona, así que la misma
+    // persona puede tener DOS inputs en pantalla (uno por lista): el que no
+    // corresponde a su checkbox marcado queda deshabilitado y hay que
+    // ignorarlo, o su valor por defecto ("1") pisaría el que sí se tecleó.
+    qsa('.weight-input:not(:disabled)').forEach((inp) => {
+      const val = parseInt(inp.value, 10);
+      if (val && val > 0) selection.weights[inp.dataset.personId] = val;
+    });
   }
 
   function renderStep() {
@@ -990,18 +1076,19 @@ function openTripModal(dayId, tripId, batchDates) {
       const driver = car ? state.people.find((p) => p.id === car.driverId) : null;
       const passengerCandidates = state.people.filter((p) => p.id !== (car ? car.driverId : null));
 
-      const renderPassengerCheckboxes = (checkedIds) => passengerCandidates.length
+      const renderPassengerCheckboxes = (checkedIds, containerKind) => passengerCandidates.length
         ? passengerCandidates.map((p) => `
-            <label class="checkbox-row">
+            <label class="checkbox-row ${selection.useWeights ? 'weight-checkbox-row' : ''}">
               <input type="checkbox" value="${p.id}" ${checkedIds.includes(p.id) ? 'checked' : ''}>
               <span>${esc(p.name)}</span>
+              ${selection.useWeights ? `<input type="number" class="input weight-input" data-person-id="${p.id}" data-kind="${containerKind}" min="1" max="9" step="1" value="${selection.weights[p.id] || 1}" ${checkedIds.includes(p.id) ? '' : 'disabled'}>` : ''}
             </label>`).join('')
         : '<p class="hint">No hay más personas que el conductor. Añade personas en Configuración.</p>';
 
       bodyHtml = `
         <h3 class="wizard-title">Paso 3 de 3 · ${selection.roundTrip ? '¿Quién iba a la ida?' : '¿Quién iba?'}</h3>
         <p class="hint" style="margin:0 0 10px;">Aparte del conductor (${esc(driver ? driver.name : '—')}).</p>
-        <div class="checkbox-grid" id="wizardOutboundPassengers">${renderPassengerCheckboxes(selection.passengerIds)}</div>
+        <div class="checkbox-grid" id="wizardOutboundPassengers">${renderPassengerCheckboxes(selection.passengerIds, 'outbound')}</div>
         ${selection.roundTrip ? `
           <label class="field-toggle" style="margin:14px 0 6px;">
             <input type="checkbox" id="sameReturnToggle" ${sameReturnUI ? 'checked' : ''}>
@@ -1009,8 +1096,15 @@ function openTripModal(dayId, tripId, batchDates) {
           </label>
           <div id="wizardReturnSection" class="${sameReturnUI ? 'hidden' : ''}">
             <p class="hint" style="margin:8px 0 6px;">¿Quién iba a la vuelta?</p>
-            <div class="checkbox-grid" id="wizardReturnPassengers">${renderPassengerCheckboxes(selection.returnPassengerIds)}</div>
+            <div class="checkbox-grid" id="wizardReturnPassengers">${renderPassengerCheckboxes(selection.returnPassengerIds, 'return')}</div>
           </div>
+        ` : ''}
+        ${passengerCandidates.length ? `
+          <label class="field-toggle" style="margin:14px 0 6px;">
+            <input type="checkbox" id="weightedToggle" ${selection.useWeights ? 'checked' : ''}>
+            <span>⚖️ Repartir en partes distintas (no a partes iguales)</span>
+          </label>
+          ${selection.useWeights ? `<p class="hint" style="margin:0 0 10px;">Cuántas "partes" paga cada uno: 1 es lo normal, 2 el doble, etc. El conductor siempre cuenta como 1 parte.</p>` : ''}
         ` : ''}
         <button type="button" class="btn btn-primary btn-block mt-8" id="wizardSaveBtn">${batchDates ? `Añadir a ${batchDates.length} día(s)` : (editing ? 'Guardar cambios' : 'Guardar trayecto')}</button>`;
     }
@@ -1071,6 +1165,7 @@ function openTripModal(dayId, tripId, batchDates) {
     } else {
       if (selection.roundTrip) {
         qs('#sameReturnToggle').addEventListener('change', (e) => {
+          captureWeightsFromDOM();
           sameReturnUI = e.target.checked;
           const currentOutbound = qsa('#wizardOutboundPassengers input[type="checkbox"]:checked').map((cb) => cb.value);
           selection.passengerIds = currentOutbound;
@@ -1079,6 +1174,26 @@ function openTripModal(dayId, tripId, batchDates) {
           // marcar la vuelta entera desde cero.
           selection.returnPassengerIds = [...currentOutbound];
           renderStep();
+        });
+      }
+
+      const weightedToggleEl = qs('#weightedToggle');
+      if (weightedToggleEl) {
+        weightedToggleEl.addEventListener('change', (e) => {
+          captureWeightsFromDOM();
+          selection.useWeights = e.target.checked;
+          renderStep();
+        });
+      }
+      if (selection.useWeights) {
+        // El input de peso de cada fila se activa/desactiva junto con su
+        // checkbox: no tiene sentido pedir "cuántas partes paga" alguien que
+        // ni siquiera va en el trayecto.
+        qsa('#wizardOutboundPassengers input[type="checkbox"], #wizardReturnPassengers input[type="checkbox"]').forEach((cb) => {
+          cb.addEventListener('change', () => {
+            const weightInput = cb.closest('.checkbox-row').querySelector('.weight-input');
+            if (weightInput) weightInput.disabled = !cb.checked;
+          });
         });
       }
 
@@ -1093,13 +1208,29 @@ function openTripModal(dayId, tripId, batchDates) {
           : undefined;
         selection.passengerIds = passengerIds;
         selection.returnPassengerIds = returnPassengerIds || [];
+
+        // Solo guardamos un peso por persona si se activó el reparto desigual
+        // y de verdad se tecleó algo distinto de 1 (el caso normal no lleva
+        // este campo, para no ensuciar los trayectos de siempre).
+        let weights;
+        if (selection.useWeights) {
+          captureWeightsFromDOM();
+          weights = {};
+          new Set([...passengerIds, ...(returnPassengerIds || [])]).forEach((pid) => {
+            const w = selection.weights[pid];
+            if (w && w > 1) weights[pid] = w;
+          });
+          if (Object.keys(weights).length === 0) weights = undefined;
+        }
+
         state.lastTrip = {
           carId: selection.carId,
           savedTripId: selection.savedTripId,
           km: selection.km,
           passengerIds,
           roundTrip: selection.roundTrip,
-          returnPassengerIds: selection.returnPassengerIds
+          returnPassengerIds: selection.returnPassengerIds,
+          weights
         };
 
         const tripData = {
@@ -1108,7 +1239,8 @@ function openTripModal(dayId, tripId, batchDates) {
           passengerIds,
           savedTripId: selection.savedTripId,
           roundTrip: selection.roundTrip,
-          returnPassengerIds
+          returnPassengerIds,
+          weights
         };
 
         if (batchDates && batchDates.length) {
@@ -1307,12 +1439,155 @@ function buildShareText(summary, range) {
   return lines.join('\n');
 }
 
+/* -------- Compartir el resumen como imagen (canvas, sin librerías) -------- */
+
+function drawRoundedRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+async function buildShareImageBlob(summary, range) {
+  const W = 900;
+  const PAD = 56;
+  const ROW_H = 62;
+  const ROW_GAP = 12;
+  const debtRows = Math.max(1, (summary.pairwiseDebts || []).length);
+  const H = 430 + summary.perPerson.length * (ROW_H + ROW_GAP) + debtRows * (ROW_H + ROW_GAP) + 100;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const FONT = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+  // Mismo degradado fijo que .summary-hero en la app: independiente del
+  // tema, para que la imagen se lea bien la comparta quien la comparta.
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#1e40af');
+  grad.addColorStop(1, '#0f172a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  const rowBg = () => { ctx.fillStyle = 'rgba(255,255,255,0.12)'; };
+  const drawRow = (y, leftText, rightText, leftFont, rightFont) => {
+    drawRoundedRect(ctx, PAD, y, W - PAD * 2, ROW_H, 14);
+    rowBg();
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.font = leftFont;
+    ctx.fillText(leftText, PAD + 22, y + ROW_H / 2 + 7, W - PAD * 2 - 160);
+    ctx.textAlign = 'right';
+    ctx.font = rightFont;
+    ctx.fillText(rightText, W - PAD - 22, y + ROW_H / 2 + 7);
+    ctx.textAlign = 'left';
+  };
+
+  let y = PAD;
+  ctx.fillStyle = '#fff';
+  ctx.font = `700 32px ${FONT}`;
+  ctx.fillText('⛽ Gastos Coche', PAD, y + 32);
+  y += 50;
+  ctx.font = `500 19px ${FONT}`;
+  ctx.globalAlpha = 0.85;
+  ctx.fillText(`Periodo ${range}`, PAD, y + 19);
+  ctx.globalAlpha = 1;
+  y += 64;
+
+  ctx.font = `800 68px ${FONT}`;
+  ctx.fillText(formatEUR(summary.totalCost), PAD, y + 68);
+  y += 92;
+  ctx.font = `400 17px ${FONT}`;
+  ctx.globalAlpha = 0.85;
+  ctx.fillText(`${summary.dayCount} día(s) · ${summary.tripCount} trayecto(s)`, PAD, y + 17);
+  ctx.globalAlpha = 1;
+  y += 56;
+
+  ctx.font = `700 22px ${FONT}`;
+  ctx.fillText('Consumo por persona', PAD, y + 22);
+  y += 42;
+  summary.perPerson.forEach((p) => {
+    drawRow(y, p.name, formatEUR(p.share), `600 20px ${FONT}`, `700 20px ${FONT}`);
+    y += ROW_H + ROW_GAP;
+  });
+  y += 18;
+
+  ctx.font = `700 22px ${FONT}`;
+  ctx.fillText('Deudas', PAD, y + 22);
+  y += 42;
+  if ((summary.pairwiseDebts || []).length) {
+    summary.pairwiseDebts.forEach((d) => {
+      drawRow(y, `${d.from} → ${d.to}`, formatEUR(d.amount), `600 18px ${FONT}`, `700 20px ${FONT}`);
+      y += ROW_H + ROW_GAP;
+    });
+  } else {
+    drawRoundedRect(ctx, PAD, y, W - PAD * 2, ROW_H, 14);
+    rowBg();
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = `600 18px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('Nadie debe nada a nadie 🎉', W / 2, y + ROW_H / 2 + 6);
+    ctx.textAlign = 'left';
+  }
+
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+}
+
+// Comparte un archivo con la Web Share API; devuelve true tanto si se
+// compartió como si el usuario simplemente cerró la bandeja de compartir
+// (en ambos casos ya "gestionamos" el intento y no hay que seguir probando
+// otros métodos, o el usuario vería un doble comportamiento raro).
+async function tryShareFile(file) {
+  if (!file || !navigator.canShare || !navigator.canShare({ files: [file] })) return false;
+  try {
+    await navigator.share({ files: [file], title: 'Gastos Coche' });
+    return true;
+  } catch (e) {
+    return e && e.name === 'AbortError';
+  }
+}
+
+async function tryShareText(text) {
+  if (!navigator.share) return false;
+  try {
+    await navigator.share({ title: 'Gastos Coche', text });
+    return true;
+  } catch (e) {
+    return e && e.name === 'AbortError';
+  }
+}
+
 async function shareSummary(summary, range) {
   if (summary.tripCount === 0) { showToast('No hay nada que compartir todavía'); return; }
-  const text = buildShareText(summary, range);
-  if (navigator.share) {
-    try { await navigator.share({ title: 'Gastos Coche', text }); return; } catch (e) { /* cancelado, seguimos con fallback */ }
+
+  let blob = null;
+  try { blob = await buildShareImageBlob(summary, range); } catch (e) { console.warn('No se pudo generar la imagen para compartir', e); }
+  const fileName = `gastos-coche-${range.replace(/[^\p{L}\p{N}]+/gu, '-')}.png`;
+  const file = blob ? new File([blob], fileName, { type: 'image/png' }) : null;
+
+  if (await tryShareFile(file)) return;
+  if (await tryShareText(buildShareText(summary, range))) return;
+
+  if (file) {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('Imagen descargada');
+    return;
   }
+
+  const text = buildShareText(summary, range);
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try { await navigator.clipboard.writeText(text); showToast('Resumen copiado al portapapeles'); return; } catch (e) { /* sigue al prompt */ }
   }
@@ -1350,6 +1625,29 @@ function closePeriod(summary, range) {
 /* =====================================================================
    RENDER: HISTORIAL
    ===================================================================== */
+
+function renderStatsCardHTML(aggregate) {
+  if (!aggregate.tripCount) return '';
+  const perKm = aggregate.totalKm > 0 ? aggregate.totalCost / aggregate.totalKm : 0;
+  const perTrip = aggregate.tripCount > 0 ? aggregate.totalCost / aggregate.tripCount : 0;
+  const perDay = aggregate.dayCount > 0 ? aggregate.totalCost / aggregate.dayCount : 0;
+
+  const stat = (label, value) => `
+    <div class="stat-box">
+      <div class="stat-value">${esc(value)}</div>
+      <div class="stat-label">${esc(label)}</div>
+    </div>`;
+
+  return `
+    <div class="card">
+      <h2>Estadísticas</h2>
+      <div class="stats-grid">
+        ${stat('por km', formatEUR(perKm))}
+        ${stat('por trayecto', formatEUR(perTrip))}
+        ${stat('por día', formatEUR(perDay))}
+      </div>
+    </div>`;
+}
 
 function renderHistoryChartHTML() {
   if (state.history.length < 2) return '';
@@ -1400,6 +1698,7 @@ function renderHistorial() {
         <div class="summary-hero-sub">${aggregate.dayCount} día(s) con trayectos · ${aggregate.tripCount} trayecto(s) en total</div>
       </div>
       ${renderHistoryChartHTML()}
+      ${renderStatsCardHTML(aggregate)}
       ${renderSummaryBlocksHTML(aggregate, { personBars: true })}`;
   } else {
     aggregateContainer.classList.add('hidden');
@@ -1518,6 +1817,7 @@ function openPersonModal(person) {
     closeModal();
     renderPeople();
     renderCars();
+    renderRegistro(); // por si estábamos en la guía inicial, para avanzar al siguiente paso
     showToast('Guardado');
   });
 }
@@ -1846,6 +2146,15 @@ function sanitizeImportedState(raw) {
     const returnPassengerIds = roundTrip
       ? (Array.isArray(t.returnPassengerIds) ? t.returnPassengerIds.filter((id) => peopleIds.has(id)) : [...passengerIds])
       : undefined;
+    let weights;
+    if (t.weights && typeof t.weights === 'object') {
+      weights = {};
+      Object.keys(t.weights).forEach((pid) => {
+        const w = Number(t.weights[pid]);
+        if (peopleIds.has(pid) && Number.isInteger(w) && w > 1) weights[pid] = w;
+      });
+      if (Object.keys(weights).length === 0) weights = undefined;
+    }
     return {
       id: (typeof t.id === 'string' && t.id) ? t.id : uid(),
       carId: t.carId,
@@ -1853,7 +2162,8 @@ function sanitizeImportedState(raw) {
       passengerIds,
       savedTripId: (typeof t.savedTripId === 'string' && t.savedTripId) || null,
       roundTrip,
-      returnPassengerIds
+      returnPassengerIds,
+      weights
     };
   };
 
