@@ -131,21 +131,67 @@ function showUndoToast(msg, onUndo) {
 
 /* -------------------------------- Modal --------------------------------- */
 
+let modalReturnFocusEl = null;
+
+function getFocusable(container) {
+  return qsa('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])', container)
+    .filter((el) => !el.disabled && el.getClientRects().length > 0);
+}
+
 function openModal(title, bodyHTML) {
+  modalReturnFocusEl = document.activeElement;
   qs('#modalTitle').textContent = title;
   qs('#modalBody').innerHTML = bodyHTML;
   qs('#modalOverlay').classList.remove('hidden');
+  // Foco al primer campo del modal para que el teclado (y lectores de
+  // pantalla) entren directos en el contenido, sin tener que tabular desde
+  // el botón que lo abrió.
+  const focusables = getFocusable(qs('.modal-box'));
+  (focusables[0] || qs('#modalClose')).focus();
 }
 
 function closeModal() {
   qs('#modalOverlay').classList.add('hidden');
   qs('#modalBody').innerHTML = '';
+  if (modalReturnFocusEl && document.body.contains(modalReturnFocusEl)) modalReturnFocusEl.focus();
+  modalReturnFocusEl = null;
 }
 
 qs('#modalClose').addEventListener('click', closeModal);
 qs('#modalOverlay').addEventListener('click', (e) => {
   if (e.target.id === 'modalOverlay') closeModal();
 });
+
+// Atrapamos el foco dentro del modal (Tab/Shift+Tab no deben salir a la
+// página de detrás) y permitimos cerrar con Escape, como se espera de
+// cualquier diálogo accesible.
+qs('#modalOverlay').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeModal(); return; }
+  if (e.key !== 'Tab') return;
+  const focusables = getFocusable(qs('.modal-box'));
+  if (!focusables.length) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
+/* --------------------------- Modal de confirmación --------------------------- */
+
+function confirmModal({ title = 'Confirmar', message, confirmLabel = 'Confirmar', cancelLabel = 'Cancelar', danger = false, onConfirm }) {
+  const html = `
+    <p class="confirm-message">${esc(message)}</p>
+    <div class="confirm-actions">
+      <button type="button" class="btn btn-secondary btn-block" id="confirmCancelBtn">${esc(cancelLabel)}</button>
+      <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'} btn-block" id="confirmOkBtn">${esc(confirmLabel)}</button>
+    </div>`;
+  openModal(title, html);
+  // El foco por defecto (heredado de openModal) cae en "Cancelar", el primer
+  // botón del cuerpo: es el comportamiento más seguro para una acción que
+  // puede ser destructiva.
+  qs('#confirmCancelBtn').addEventListener('click', closeModal);
+  qs('#confirmOkBtn').addEventListener('click', () => { closeModal(); onConfirm(); });
+}
 
 /* -------------------------------- Tabs ---------------------------------- */
 
@@ -297,6 +343,13 @@ function computePeriodSummary(period) {
 
   const dayCount = period.days.filter((d) => d.trips.length > 0).length;
 
+  // Pagos que alguien ha marcado como ya hechos (fuera de la app): restan de
+  // lo que esa persona debía, igual que si hubiera pagado ese trayecto.
+  (period.settlements || []).forEach((s) => {
+    const key = `${s.fromId}|${s.toId}`;
+    pairDebts.set(key, (pairDebts.get(key) || 0) - s.amount);
+  });
+
   // Deudas persona a persona: solo se neta lo que se deben mutuamente esas dos
   // personas entre sí, sin mezclar a nadie más.
   const pairKeys = new Set();
@@ -313,7 +366,9 @@ function computePeriodSummary(period) {
   }).filter((p) => Math.abs(p.amount) > 0.005);
 
   const pairwiseDebts = pairwiseBalances
-    .map((p) => (p.amount > 0 ? { from: p.aName, to: p.bName, amount: p.amount } : { from: p.bName, to: p.aName, amount: -p.amount }))
+    .map((p) => (p.amount > 0
+      ? { from: p.aName, to: p.bName, fromId: p.aId, toId: p.bId, amount: p.amount }
+      : { from: p.bName, to: p.aName, fromId: p.bId, toId: p.aId, amount: -p.amount }))
     .sort((a, b) => b.amount - a.amount);
 
   return { totalCost, tripCount, dayCount, perCar, perPerson, pairwiseBalances, pairwiseDebts };
@@ -592,7 +647,7 @@ function copyPreviousDay(dayId) {
     showToast('Trayectos copiados');
   };
   if (target.trips.length > 0) {
-    if (confirm('Este día ya tiene trayectos. ¿Añadir también los del día anterior?')) doCopy();
+    confirmModal({ title: 'Copiar día anterior', message: 'Este día ya tiene trayectos. ¿Añadir también los del día anterior?', confirmLabel: 'Añadir', onConfirm: doCopy });
   } else {
     doCopy();
   }
@@ -760,17 +815,19 @@ function openTripModal(dayId, tripId, batchDates) {
   const editing = (!batchDates && tripId) ? day.trips.find((t) => t.id === tripId) : null;
 
   // Al añadir un trayecto nuevo (no al editar uno existente), precargamos el
-  // último coche/trayecto guardado que se usó: casi siempre es el mismo día tras día.
+  // último coche/trayecto/pasajeros que se usaron: casi siempre es el mismo
+  // grupo de gente día tras día.
   const lastTrip = state.lastTrip;
+  const validLastPassengers = (ids) => (Array.isArray(ids) ? ids.filter((id) => state.people.some((p) => p.id === id)) : []);
   const selection = {
     carId: editing ? editing.carId
       : (lastTrip && state.cars.some((c) => c.id === lastTrip.carId) ? lastTrip.carId : state.cars[0].id),
     savedTripId: editing ? editing.savedTripId
       : (lastTrip && lastTrip.savedTripId && state.savedTrips.some((s) => s.id === lastTrip.savedTripId) ? lastTrip.savedTripId : null),
     km: null,
-    passengerIds: editing ? [...editing.passengerIds] : [],
-    roundTrip: editing ? !!editing.roundTrip : false,
-    returnPassengerIds: editing ? [...(editing.returnPassengerIds || editing.passengerIds || [])] : []
+    passengerIds: editing ? [...editing.passengerIds] : validLastPassengers(lastTrip && lastTrip.passengerIds),
+    roundTrip: editing ? !!editing.roundTrip : !!(lastTrip && lastTrip.roundTrip),
+    returnPassengerIds: editing ? [...(editing.returnPassengerIds || editing.passengerIds || [])] : validLastPassengers(lastTrip && lastTrip.returnPassengerIds)
   };
   if (editing) {
     selection.km = editing.km;
@@ -780,17 +837,23 @@ function openTripModal(dayId, tripId, batchDates) {
     selection.km = lastTrip.km;
   }
 
-  // Si al editar la ida y la vuelta llevaban la misma gente, arrancamos con la
-  // vista simple (una sola lista); si eran distintas, mostramos las dos de entrada.
+  // Si la ida y la vuelta llevaban la misma gente (al editar, o en el último
+  // trayecto usado como referencia), arrancamos con la vista simple (una
+  // sola lista); si eran distintas, mostramos las dos de entrada.
   let sameReturnUI = true;
-  if (editing && editing.roundTrip) {
-    const sortedOut = [...(editing.passengerIds || [])].sort();
-    const sortedRet = [...(editing.returnPassengerIds || editing.passengerIds || [])].sort();
+  const referenceRoundTrip = editing || (lastTrip && lastTrip.roundTrip ? lastTrip : null);
+  if (referenceRoundTrip && referenceRoundTrip.roundTrip) {
+    const sortedOut = [...(referenceRoundTrip.passengerIds || [])].sort();
+    const sortedRet = [...(referenceRoundTrip.returnPassengerIds || referenceRoundTrip.passengerIds || [])].sort();
     sameReturnUI = JSON.stringify(sortedOut) === JSON.stringify(sortedRet);
   }
 
   let step = 1;
 
+  // El wizard no pasa por openModal() (tiene su propio ciclo de renderStep()
+  // por paso), así que hay que anotar aquí el elemento con foco para poder
+  // devolverlo al cerrar, igual que hace el resto de modales.
+  modalReturnFocusEl = document.activeElement;
   qs('#modalOverlay').classList.remove('hidden');
   renderStep();
 
@@ -878,6 +941,10 @@ function openTripModal(dayId, tripId, batchDates) {
     void modalBodyEl.offsetWidth; // fuerza reflow para reiniciar la animación en cada paso
     modalBodyEl.classList.add('step-anim');
     bindEvents();
+    // Cada paso reconstruye el HTML entero, así que el foco se pierde: lo
+    // devolvemos al primer campo interactivo del paso nuevo.
+    const stepFocusables = getFocusable(modalBodyEl);
+    if (stepFocusables[0]) stepFocusables[0].focus();
   }
 
   function bindEvents() {
@@ -940,7 +1007,14 @@ function openTripModal(dayId, tripId, batchDates) {
           : undefined;
         selection.passengerIds = passengerIds;
         selection.returnPassengerIds = returnPassengerIds || [];
-        state.lastTrip = { carId: selection.carId, savedTripId: selection.savedTripId, km: selection.km };
+        state.lastTrip = {
+          carId: selection.carId,
+          savedTripId: selection.savedTripId,
+          km: selection.km,
+          passengerIds,
+          roundTrip: selection.roundTrip,
+          returnPassengerIds: selection.returnPassengerIds
+        };
 
         const tripData = {
           carId: selection.carId,
@@ -988,7 +1062,9 @@ function openTripModal(dayId, tripId, batchDates) {
    RENDER: RESUMEN
    ===================================================================== */
 
-function renderSummaryBlocksHTML(summary) {
+function renderSummaryBlocksHTML(summary, opts) {
+  const interactive = !!(opts && opts.interactive);
+
   if (summary.tripCount === 0) {
     return `<p class="empty-state">Este periodo todavía no tiene trayectos registrados.</p>`;
   }
@@ -1008,12 +1084,16 @@ function renderSummaryBlocksHTML(summary) {
       <div class="summary-item-value">${esc(formatEUR(p.share))}</div>
     </div>`).join('');
 
+  // El botón para marcar una deuda como pagada solo tiene sentido en el
+  // periodo actual (con ids de personas vivos): en Historial las deudas son
+  // una foto fija de periodos ya cerrados.
   const debtRowHTML = (d) => `
     <div class="debt-item">
       <span>${esc(d.from)}</span>
       <span class="debt-arrow">→</span>
       <span>${esc(d.to)}</span>
       <span class="debt-amount">${esc(formatEUR(d.amount))}</span>
+      ${interactive ? `<button type="button" class="icon-btn settle-btn" data-action="settle-debt" data-from-id="${esc(d.fromId)}" data-to-id="${esc(d.toId)}" data-from-name="${esc(d.from)}" data-to-name="${esc(d.to)}" data-amount="${d.amount}" title="Marcar como pagada">✓</button>` : ''}
     </div>`;
 
   const pairwiseHTML = (summary.pairwiseDebts || []).length
@@ -1031,9 +1111,43 @@ function renderSummaryBlocksHTML(summary) {
     </div>
     <div class="card">
       <h2>Deudas</h2>
-      <p class="hint" style="margin:0 0 10px;">Quién le debe a quién, persona a persona.</p>
+      <p class="hint" style="margin:0 0 10px;">Quién le debe a quién, persona a persona.${interactive ? ' Toca ✓ si ya se ha pagado fuera de la app.' : ''}</p>
       <div class="summary-list">${pairwiseHTML}</div>
     </div>`;
+}
+
+function openSettleModal(fromId, toId, fromName, toName, maxAmount) {
+  const html = `
+    <p class="hint" style="margin:0 0 12px;">Registra que ${esc(fromName)} ya le ha pagado a ${esc(toName)} fuera de la app. Se restará de la deuda pendiente.</p>
+    <label class="field">
+      <span>Importe pagado (€)</span>
+      <input type="number" id="settleAmountInput" class="input" inputmode="decimal" step="0.01" min="0.01" value="${maxAmount.toFixed(2)}">
+    </label>
+    <button type="button" class="btn btn-primary btn-block" id="settleSaveBtn">Marcar como pagada</button>
+  `;
+  openModal('Registrar pago', html);
+  qs('#settleSaveBtn').addEventListener('click', () => {
+    const amount = parseFloat(qs('#settleAmountInput').value);
+    if (!amount || amount <= 0) { showToast('Introduce un importe válido'); return; }
+    if (amount > maxAmount + 0.01) { showToast('No puede ser más que la deuda actual'); return; }
+    closeModal();
+    settleDebt(fromId, toId, amount);
+  });
+}
+
+function settleDebt(fromId, toId, amount) {
+  if (!Array.isArray(state.period.settlements)) state.period.settlements = [];
+  const record = { id: uid(), fromId, toId, amount };
+  state.period.settlements.push(record);
+  saveState();
+  renderResumen();
+  renderRegistroDashboard();
+  showUndoToast('Pago registrado', () => {
+    state.period.settlements = state.period.settlements.filter((s) => s.id !== record.id);
+    saveState();
+    renderResumen();
+    renderRegistroDashboard();
+  });
 }
 
 function renderResumen() {
@@ -1056,11 +1170,20 @@ function renderResumen() {
       <button type="button" class="btn btn-secondary" id="closePeriodBtn">✅ Cerrar periodo y empezar uno nuevo</button>
     </div>`;
 
-  qs('#summaryContent').innerHTML = hero + renderSummaryBlocksHTML(summary) + actions;
+  qs('#summaryContent').innerHTML = hero + renderSummaryBlocksHTML(summary, { interactive: true }) + actions;
 
   qs('#shareSummaryBtn').addEventListener('click', () => shareSummary(summary, range));
   qs('#closePeriodBtn').addEventListener('click', () => closePeriod(summary, range));
 }
+
+// Delegado sobre el contenedor fijo (no se recrea en cada render, a
+// diferencia de los botones de dentro) para no acumular listeners cada vez
+// que se visita la pestaña Resumen.
+qs('#summaryContent').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="settle-debt"]');
+  if (!btn) return;
+  openSettleModal(btn.dataset.fromId, btn.dataset.toId, btn.dataset.fromName, btn.dataset.toName, parseFloat(btn.dataset.amount));
+});
 
 function buildShareText(summary, range) {
   const lines = [];
@@ -1100,31 +1223,67 @@ async function shareSummary(summary, range) {
 }
 
 function closePeriod(summary, range) {
-  if (summary.tripCount === 0) {
-    if (!confirm('El periodo está vacío. ¿Cerrarlo igualmente y empezar uno nuevo?')) return;
-  } else if (!confirm(`¿Cerrar el periodo (${range}) y guardarlo en el historial? Empezarás uno nuevo vacío.`)) {
-    return;
-  }
+  const doClose = () => {
+    state.history.unshift({
+      id: uid(),
+      closedAt: todayISO(),
+      range,
+      startDate: getSortedDays(state.period)[0]?.date || null,
+      endDate: getSortedDays(state.period).slice(-1)[0]?.date || null,
+      summary
+    });
+    state.period = { id: uid(), createdAt: todayISO(), days: [] };
+    saveState();
+    renderRegistro();
+    updatePeriodBadge();
+    switchTab('registro');
+    showToast('Periodo cerrado y guardado en el historial');
+  };
 
-  state.history.unshift({
-    id: uid(),
-    closedAt: todayISO(),
-    range,
-    startDate: getSortedDays(state.period)[0]?.date || null,
-    endDate: getSortedDays(state.period).slice(-1)[0]?.date || null,
-    summary
+  confirmModal({
+    title: 'Cerrar periodo',
+    message: summary.tripCount === 0
+      ? 'El periodo está vacío. ¿Cerrarlo igualmente y empezar uno nuevo?'
+      : `¿Cerrar el periodo (${range}) y guardarlo en el historial? Empezarás uno nuevo vacío.`,
+    confirmLabel: 'Cerrar periodo',
+    onConfirm: doClose
   });
-  state.period = { id: uid(), createdAt: todayISO(), days: [] };
-  saveState();
-  renderRegistro();
-  updatePeriodBadge();
-  switchTab('registro');
-  showToast('Periodo cerrado y guardado en el historial');
 }
 
 /* =====================================================================
    RENDER: HISTORIAL
    ===================================================================== */
+
+function renderHistoryChartHTML() {
+  if (state.history.length < 2) return '';
+
+  // El historial se guarda con el más reciente primero (unshift): para el
+  // gráfico lo queremos en orden cronológico normal, y solo los últimos N
+  // periodos para que las barras no se queden diminutas.
+  const chronological = [...state.history].sort((a, b) => (a.startDate || a.closedAt || '').localeCompare(b.startDate || b.closedAt || ''));
+  const MAX_BARS = 8;
+  const shown = chronological.slice(-MAX_BARS);
+  const hiddenCount = chronological.length - shown.length;
+  const max = Math.max(...shown.map((e) => e.summary.totalCost || 0), 0.01);
+
+  const bars = shown.map((e) => {
+    const cost = e.summary.totalCost || 0;
+    const pct = Math.max(4, Math.round((cost / max) * 100));
+    return `
+      <div class="chart-bar-col" title="${esc(e.range || '')}: ${esc(formatEUR(cost))}">
+        <div class="chart-bar-value">${esc(formatEUR(cost))}</div>
+        <div class="chart-bar" style="height:${pct}%;"></div>
+        <div class="chart-bar-label">${esc(formatDateShort(e.startDate || e.closedAt))}</div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="card chart-card">
+      <h2>Evolución del gasto</h2>
+      ${hiddenCount > 0 ? `<p class="hint" style="margin:0 0 10px;">Mostrando los últimos ${MAX_BARS} periodos (${hiddenCount} más antiguos no se muestran aquí).</p>` : ''}
+      <div class="chart-bars">${bars}</div>
+    </div>`;
+}
 
 function renderHistorial() {
   const aggregateContainer = qs('#historyAggregate');
@@ -1143,6 +1302,7 @@ function renderHistorial() {
         <div class="summary-hero-value">${esc(formatEUR(aggregate.totalCost))}</div>
         <div class="summary-hero-sub">${aggregate.dayCount} día(s) con trayectos · ${aggregate.tripCount} trayecto(s) en total</div>
       </div>
+      ${renderHistoryChartHTML()}
       ${renderSummaryBlocksHTML(aggregate)}`;
   } else {
     aggregateContainer.classList.add('hidden');
@@ -1176,19 +1336,33 @@ qs('#historyList').addEventListener('click', (e) => {
   if (action === 'toggle-detail') {
     item.querySelector('.history-item-detail').classList.toggle('hidden');
   } else if (action === 'delete-history') {
-    if (!confirm('¿Eliminar este periodo del historial? No se puede deshacer.')) return;
-    state.history = state.history.filter((h) => h.id !== id);
-    saveState();
-    renderHistorial();
+    confirmModal({
+      title: 'Eliminar periodo',
+      message: '¿Eliminar este periodo del historial? No se puede deshacer.',
+      confirmLabel: 'Eliminar',
+      danger: true,
+      onConfirm: () => {
+        state.history = state.history.filter((h) => h.id !== id);
+        saveState();
+        renderHistorial();
+      }
+    });
   }
 });
 
 qs('#clearHistoryBtn').addEventListener('click', () => {
-  if (!confirm('¿Borrar TODO el historial? Se perderán los totales acumulados de todos los periodos cerrados. Esta acción no se puede deshacer.')) return;
-  state.history = [];
-  saveState();
-  renderHistorial();
-  showToast('Historial borrado');
+  confirmModal({
+    title: 'Borrar historial',
+    message: '¿Borrar TODO el historial? Se perderán los totales acumulados de todos los periodos cerrados. Esta acción no se puede deshacer.',
+    confirmLabel: 'Borrar todo',
+    danger: true,
+    onConfirm: () => {
+      state.history = [];
+      saveState();
+      renderHistorial();
+      showToast('Historial borrado');
+    }
+  });
 });
 
 /* =====================================================================
@@ -1253,9 +1427,27 @@ function openPersonModal(person) {
 function deletePerson(person) {
   const drivesAnyCar = state.cars.some((c) => c.driverId === person.id);
   if (drivesAnyCar) { showToast('Esta persona conduce un coche. Cambia el conductor antes de borrarla.'); return; }
-  if (!confirm(`¿Eliminar a ${person.name}? Se quitará de los trayectos donde apareciera.`)) return;
+  confirmModal({
+    title: 'Eliminar persona',
+    message: `¿Eliminar a ${person.name}? Se quitará de los trayectos y deudas donde apareciera.`,
+    confirmLabel: 'Eliminar',
+    danger: true,
+    onConfirm: () => doDeletePerson(person)
+  });
+}
+
+function doDeletePerson(person) {
   state.people = state.people.filter((p) => p.id !== person.id);
-  state.period.days.forEach((day) => day.trips.forEach((t) => { t.passengerIds = t.passengerIds.filter((id) => id !== person.id); }));
+  // Un trayecto puede tener pasajeros distintos a la ida y a la vuelta, y
+  // puede haber pagos registrados entre personas: hay que limpiar las tres
+  // referencias, si no dejamos ids "fantasma" apuntando a nadie.
+  state.period.days.forEach((day) => day.trips.forEach((t) => {
+    t.passengerIds = (t.passengerIds || []).filter((id) => id !== person.id);
+    if (t.returnPassengerIds) t.returnPassengerIds = t.returnPassengerIds.filter((id) => id !== person.id);
+  }));
+  if (Array.isArray(state.period.settlements)) {
+    state.period.settlements = state.period.settlements.filter((s) => s.fromId !== person.id && s.toId !== person.id);
+  }
   saveState();
   renderPeople();
   renderRegistro();
@@ -1358,11 +1550,18 @@ function openCarModal(car) {
 function deleteCar(car) {
   const usedInPeriod = state.period.days.some((day) => day.trips.some((t) => t.carId === car.id));
   if (usedInPeriod) { showToast('Este coche tiene trayectos en el periodo actual. Elimínalos primero.'); return; }
-  if (!confirm(`¿Eliminar el coche "${car.name}"?`)) return;
-  state.cars = state.cars.filter((c) => c.id !== car.id);
-  saveState();
-  renderCars();
-  renderPeople();
+  confirmModal({
+    title: 'Eliminar coche',
+    message: `¿Eliminar el coche "${car.name}"?`,
+    confirmLabel: 'Eliminar',
+    danger: true,
+    onConfirm: () => {
+      state.cars = state.cars.filter((c) => c.id !== car.id);
+      saveState();
+      renderCars();
+      renderPeople();
+    }
+  });
 }
 
 /* =====================================================================
@@ -1449,10 +1648,17 @@ function openSavedTripModal(trip) {
 }
 
 function deleteSavedTrip(trip) {
-  if (!confirm(`¿Eliminar "${trip.name}"?`)) return;
-  state.savedTrips = state.savedTrips.filter((s) => s.id !== trip.id);
-  saveState();
-  renderSavedTrips();
+  confirmModal({
+    title: 'Eliminar trayecto guardado',
+    message: `¿Eliminar "${trip.name}"?`,
+    confirmLabel: 'Eliminar',
+    danger: true,
+    onConfirm: () => {
+      state.savedTrips = state.savedTrips.filter((s) => s.id !== trip.id);
+      saveState();
+      renderSavedTrips();
+    }
+  });
 }
 
 /* =====================================================================
@@ -1474,37 +1680,183 @@ qs('#exportDataBtn').addEventListener('click', () => {
 
 qs('#importDataBtn').addEventListener('click', () => qs('#importFileInput').click());
 
+// Reconstruye un estado válido a partir de un JSON externo, descartando (sin
+// romper el resto) cualquier entrada con datos incompletos o referencias a
+// ids que no existen (p.ej. un trayecto cuyo coche ya no está en el
+// archivo). Devuelve también la lista de avisos para poder informar al
+// usuario antes de que confirme el reemplazo.
+function sanitizeImportedState(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('El archivo no contiene datos de la app (formato no reconocido).');
+  }
+
+  const issues = [];
+
+  const people = Array.isArray(raw.people) ? raw.people : [];
+  const cleanPeople = [];
+  people.forEach((p) => {
+    if (p && typeof p.name === 'string' && p.name.trim()) {
+      cleanPeople.push({ id: (typeof p.id === 'string' && p.id) ? p.id : uid(), name: p.name.trim() });
+    } else {
+      issues.push('Una persona sin nombre válido.');
+    }
+  });
+  const peopleIds = new Set(cleanPeople.map((p) => p.id));
+
+  const cars = Array.isArray(raw.cars) ? raw.cars : [];
+  const cleanCars = [];
+  cars.forEach((c) => {
+    const consumption = Number(c && c.consumption);
+    if (c && typeof c.name === 'string' && c.name.trim() && peopleIds.has(c && c.driverId) && consumption > 0) {
+      cleanCars.push({
+        id: (typeof c.id === 'string' && c.id) ? c.id : uid(),
+        name: c.name.trim(),
+        driverId: c.driverId,
+        consumption,
+        useOwnPrice: !!c.useOwnPrice,
+        ownPrice: (c.useOwnPrice && Number(c.ownPrice) > 0) ? Number(c.ownPrice) : null
+      });
+    } else {
+      issues.push(`El coche "${(c && c.name) || '(sin nombre)'}" (datos incompletos o conductor inválido).`);
+    }
+  });
+  const carIds = new Set(cleanCars.map((c) => c.id));
+
+  const savedTrips = Array.isArray(raw.savedTrips) ? raw.savedTrips : [];
+  const cleanSavedTrips = [];
+  savedTrips.forEach((s) => {
+    const km = Number(s && s.km);
+    if (s && typeof s.name === 'string' && s.name.trim() && km > 0) {
+      cleanSavedTrips.push({ id: (typeof s.id === 'string' && s.id) ? s.id : uid(), name: s.name.trim(), km });
+    } else {
+      issues.push('Un trayecto guardado con datos incompletos.');
+    }
+  });
+
+  const sanitizeTrip = (t) => {
+    if (!t || !carIds.has(t.carId)) return null;
+    const km = Number(t.km);
+    if (!(km > 0)) return null;
+    const passengerIds = Array.isArray(t.passengerIds) ? t.passengerIds.filter((id) => peopleIds.has(id)) : [];
+    const roundTrip = !!t.roundTrip;
+    const returnPassengerIds = roundTrip
+      ? (Array.isArray(t.returnPassengerIds) ? t.returnPassengerIds.filter((id) => peopleIds.has(id)) : [...passengerIds])
+      : undefined;
+    return {
+      id: (typeof t.id === 'string' && t.id) ? t.id : uid(),
+      carId: t.carId,
+      km,
+      passengerIds,
+      savedTripId: (typeof t.savedTripId === 'string' && t.savedTripId) || null,
+      roundTrip,
+      returnPassengerIds
+    };
+  };
+
+  const sanitizeDays = (days) => (Array.isArray(days) ? days : [])
+    .filter((d) => d && typeof d.date === 'string')
+    .map((d) => {
+      const rawTrips = Array.isArray(d.trips) ? d.trips : [];
+      const trips = rawTrips.map(sanitizeTrip).filter(Boolean);
+      if (trips.length !== rawTrips.length) issues.push(`${rawTrips.length - trips.length} trayecto(s) con datos incompletos el ${d.date}.`);
+      return { id: (typeof d.id === 'string' && d.id) ? d.id : uid(), date: d.date, trips };
+    });
+
+  const rawPeriod = (raw.period && typeof raw.period === 'object') ? raw.period : {};
+  const rawSettlements = Array.isArray(rawPeriod.settlements) ? rawPeriod.settlements : [];
+  const cleanSettlements = rawSettlements.filter((s) => s && peopleIds.has(s.fromId) && peopleIds.has(s.toId) && Number(s.amount) > 0);
+  if (cleanSettlements.length !== rawSettlements.length) issues.push('Algún pago registrado hacía referencia a una persona inexistente.');
+
+  const period = {
+    id: (typeof rawPeriod.id === 'string' && rawPeriod.id) ? rawPeriod.id : uid(),
+    createdAt: (typeof rawPeriod.createdAt === 'string' && rawPeriod.createdAt) ? rawPeriod.createdAt : todayISO(),
+    days: sanitizeDays(rawPeriod.days),
+    settlements: cleanSettlements
+  };
+
+  const rawHistory = Array.isArray(raw.history) ? raw.history : [];
+  const history = rawHistory.filter((h) => h && typeof h === 'object' && h.summary && typeof h.summary === 'object');
+  if (history.length !== rawHistory.length) issues.push(`${rawHistory.length - history.length} periodo(s) del historial con datos incompletos.`);
+
+  const globalPrice = Number(raw.globalPrice);
+
+  return {
+    state: {
+      version: 1,
+      people: cleanPeople,
+      cars: cleanCars,
+      globalPrice: globalPrice > 0 ? globalPrice : 1.65,
+      savedTrips: cleanSavedTrips,
+      driverPays: typeof raw.driverPays === 'boolean' ? raw.driverPays : true,
+      period,
+      history,
+      lastTrip: null,
+      theme: ['auto', 'light', 'dark'].includes(raw.theme) ? raw.theme : 'auto'
+    },
+    issues
+  };
+}
+
 qs('#importFileInput').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
+    let parsed;
     try {
-      const imported = JSON.parse(reader.result);
-      if (!imported || !Array.isArray(imported.people) || !Array.isArray(imported.cars)) throw new Error('Formato no reconocido');
-      if (!confirm('Esto reemplazará todos los datos actuales por los del archivo importado. ¿Continuar?')) return;
-      state = imported;
-      if (!state.period) state.period = { id: uid(), createdAt: todayISO(), days: [] };
-      if (!Array.isArray(state.history)) state.history = [];
-      if (!Array.isArray(state.savedTrips)) state.savedTrips = [];
-      saveState();
-      renderAll();
-      showToast('Datos importados');
+      parsed = JSON.parse(reader.result);
     } catch (err) {
-      showToast('El archivo no es válido');
+      showToast('El archivo no es un JSON válido');
+      return;
     }
+
+    let sanitized;
+    try {
+      sanitized = sanitizeImportedState(parsed);
+    } catch (err) {
+      showToast(err.message || 'El archivo no es válido');
+      return;
+    }
+
+    const { state: importedState, issues } = sanitized;
+    const summaryLine = `Se importarán ${importedState.people.length} persona(s), ${importedState.cars.length} coche(s) y ${importedState.history.length} periodo(s) cerrado(s). Esto reemplazará todos los datos actuales.`;
+    const issuesLine = issues.length
+      ? `\n\nSe han ignorado ${issues.length} elemento(s) con datos incompletos o referencias rotas (detalle en la consola).`
+      : '';
+
+    confirmModal({
+      title: 'Importar datos',
+      message: summaryLine + issuesLine,
+      confirmLabel: 'Reemplazar datos',
+      danger: true,
+      onConfirm: () => {
+        state = importedState;
+        saveState();
+        renderAll();
+        switchTab('registro');
+        showToast('Datos importados');
+        if (issues.length) console.warn('Avisos al importar datos:', issues);
+      }
+    });
   };
   reader.readAsText(file);
   e.target.value = '';
 });
 
 qs('#resetDataBtn').addEventListener('click', () => {
-  if (!confirm('¿Borrar TODOS los datos (personas, coches, periodo actual e historial)? Esta acción no se puede deshacer.')) return;
-  state = createDefaultState();
-  saveState();
-  renderAll();
-  switchTab('registro');
-  showToast('Datos borrados');
+  confirmModal({
+    title: 'Borrar todos los datos',
+    message: '¿Borrar TODOS los datos (personas, coches, periodo actual e historial)? Esta acción no se puede deshacer.',
+    confirmLabel: 'Borrar todo',
+    danger: true,
+    onConfirm: () => {
+      state = createDefaultState();
+      saveState();
+      renderAll();
+      switchTab('registro');
+      showToast('Datos borrados');
+    }
+  });
 });
 
 /* =====================================================================
