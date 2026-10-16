@@ -24,19 +24,19 @@
 
 <header class="app-header">
   <div class="app-header-title">
-    <span class="app-logo" aria-hidden="true">⛽</span>
+    <span class="app-logo" aria-hidden="true"><i data-icon="fuel"></i></span>
     <h1>Gastos Coche</h1>
   </div>
   <div class="app-header-actions">
-    <button type="button" id="lockNowBtn" class="icon-btn lock-now-btn hidden" aria-label="Bloquear la app" title="Bloquear ahora">🔒</button>
-    <button type="button" id="themeToggleBtn" class="theme-toggle-btn" aria-label="Cambiar tema">🌓</button>
+    <button type="button" id="lockNowBtn" class="icon-btn lock-now-btn hidden" aria-label="Bloquear la app" title="Bloquear ahora"><i data-icon="lock"></i></button>
+    <button type="button" id="themeToggleBtn" class="theme-toggle-btn" aria-label="Cambiar tema"><i data-icon="contrast"></i></button>
     <div class="period-badge" id="periodLabel">Periodo actual</div>
   </div>
 </header>
 
 <div id="iosInstallBanner" class="ios-banner hidden">
-  <span>Instala esta app: toca <strong>Compartir</strong> <span aria-hidden="true">⬆️</span> y luego <strong>&quot;Añadir a pantalla de inicio&quot;</strong>.</span>
-  <button type="button" id="iosInstallDismiss" class="icon-btn" aria-label="Cerrar aviso">✕</button>
+  <span>Instala esta app: toca <strong>Compartir</strong> <i data-icon="share" class="icon-inline"></i> y luego <strong>&quot;Añadir a pantalla de inicio&quot;</strong>.</span>
+  <button type="button" id="iosInstallDismiss" class="icon-btn" aria-label="Cerrar aviso"><i data-icon="x"></i></button>
 </div>
 
 <div id="updateBanner" class="ios-banner update-banner hidden">
@@ -48,7 +48,7 @@
   <span id="backupBannerText"></span>
   <div class="row-inline">
     <button type="button" id="backupNowBtn" class="btn btn-sm btn-primary">Exportar</button>
-    <button type="button" id="backupLaterBtn" class="icon-btn" aria-label="Recordar más tarde">✕</button>
+    <button type="button" id="backupLaterBtn" class="icon-btn" aria-label="Recordar más tarde"><i data-icon="x"></i></button>
   </div>
 </div>
 
@@ -58,7 +58,7 @@
   <section id="tab-registro" class="tab-panel active" data-tab-panel="registro">
 
     <div id="onboardingCard" class="card onboarding-card hidden">
-      <h2>👋 Bienvenido a Gastos Coche</h2>
+      <h2>Bienvenido a Gastos Coche</h2>
       <div id="onboardingSteps"></div>
     </div>
 
@@ -87,7 +87,7 @@
         <button type="button" id="addCustomDateBtn" class="btn btn-secondary">+ Añadir fecha</button>
       </div>
 
-      <button type="button" id="toggleMultiSelectBtn" class="btn btn-secondary btn-block mt-8">☑️ Seleccionar varios días para el mismo trayecto</button>
+      <button type="button" id="toggleMultiSelectBtn" class="btn btn-secondary btn-block mt-8"><i data-icon="check-square"></i> Seleccionar varios días para el mismo trayecto</button>
 
       <div id="multiSelectBar" class="multi-select-bar hidden">
         <span id="multiSelectCount">0 días seleccionados</span>
@@ -97,7 +97,7 @@
         </div>
       </div>
 
-      <button type="button" id="copyPrevWeekBtn" class="btn btn-secondary btn-block mt-8">📋 Copiar trayectos de la semana pasada</button>
+      <button type="button" id="copyPrevWeekBtn" class="btn btn-secondary btn-block mt-8"><i data-icon="copy"></i> Copiar trayectos de la semana pasada</button>
     </div>
 
     <div id="dayList" class="day-list">
@@ -173,6 +173,14 @@
       </label>
       <p class="hint">Si lo desactivas, el conductor no paga cuando también marcas que iba en el coche: solo pagan los demás pasajeros.</p>
       <label class="field" style="margin-top:12px;">
+        <span>Cómo se calculan las deudas</span>
+        <select id="settleModeSelect" class="input">
+          <option value="pairwise">Persona a persona</option>
+          <option value="simplified">Simplificado (menos pagos)</option>
+        </select>
+      </label>
+      <p class="hint">Simplificado compensa las deudas cruzadas: si A debe a B y B debe a C, A le paga directamente a C y B no tiene que pagar nada.</p>
+      <label class="field" style="margin-top:12px;">
         <span>Recordar cerrar el periodo tras</span>
         <select id="closeReminderSelect" class="input">
           <option value="7">1 semana</option>
@@ -193,8 +201,8 @@
       <p class="hint">Todo se guarda solo en este dispositivo. Exporta una copia de seguridad de vez en cuando.</p>
       <p class="hint" id="lastBackupInfo"></p>
       <div class="row-inline wrap">
-        <button type="button" class="btn btn-secondary" id="exportDataBtn">⬇️ Exportar JSON</button>
-        <button type="button" class="btn btn-secondary" id="importDataBtn">⬆️ Importar JSON</button>
+        <button type="button" class="btn btn-secondary" id="exportDataBtn"><i data-icon="download"></i> Exportar JSON</button>
+        <button type="button" class="btn btn-secondary" id="importDataBtn"><i data-icon="upload"></i> Importar JSON</button>
         <input type="file" id="importFileInput" accept="application/json" class="hidden">
       </div>
       <button type="button" class="btn btn-danger" id="resetDataBtn">Borrar todos los datos</button>
@@ -204,7 +212,8 @@
   <!-- ===================== HISTORIAL ===================== -->
   <section id="tab-historial" class="tab-panel" data-tab-panel="historial">
     <div id="historyAggregate" class="hidden"></div>
-    <button type="button" id="clearHistoryBtn" class="btn btn-danger hidden">🗑 Borrar todo el historial</button>
+    <button type="button" id="exportHistoryCsvBtn" class="btn btn-secondary btn-block hidden"><i data-icon="table"></i> Exportar historial a CSV</button>
+    <button type="button" id="clearHistoryBtn" class="btn btn-danger hidden"><i data-icon="trash"></i> Borrar todo el historial</button>
     <h2 id="historyListHeading" class="section-heading hidden">Periodos cerrados</h2>
     <div id="historyList" class="history-list"></div>
     <p id="historyEmptyState" class="empty-state hidden">Aún no has cerrado ningún periodo. Cuando lo hagas desde &quot;Resumen&quot;, aparecerá aquí.</p>
@@ -214,16 +223,16 @@
 
 <nav class="tabbar" id="tabbar">
   <button type="button" class="tab-btn active" data-tab="registro">
-    <span class="tab-icon" aria-hidden="true">📅</span><span>Registro</span>
+    <span class="tab-icon" aria-hidden="true"><i data-icon="calendar"></i></span><span>Registro</span>
   </button>
   <button type="button" class="tab-btn" data-tab="resumen">
-    <span class="tab-icon" aria-hidden="true">💶</span><span>Resumen</span>
+    <span class="tab-icon" aria-hidden="true"><i data-icon="euro"></i></span><span>Resumen</span>
   </button>
   <button type="button" class="tab-btn" data-tab="config">
-    <span class="tab-icon" aria-hidden="true">⚙️</span><span>Config.</span>
+    <span class="tab-icon" aria-hidden="true"><i data-icon="sliders"></i></span><span>Config.</span>
   </button>
   <button type="button" class="tab-btn" data-tab="historial">
-    <span class="tab-icon" aria-hidden="true">🗂️</span><span>Historial</span>
+    <span class="tab-icon" aria-hidden="true"><i data-icon="history"></i></span><span>Historial</span>
   </button>
 </nav>
 
@@ -232,7 +241,7 @@
   <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-header">
       <h2 id="modalTitle"></h2>
-      <button type="button" class="icon-btn" id="modalClose" aria-label="Cerrar">✕</button>
+      <button type="button" class="icon-btn" id="modalClose" aria-label="Cerrar"><i data-icon="x"></i></button>
     </div>
     <div class="modal-body" id="modalBody"></div>
   </div>
@@ -246,7 +255,7 @@
 <!-- Pantalla de bloqueo (solo si hay un PIN activado en Configuración) -->
 <div id="lockScreen" class="lock-screen hidden">
   <div class="lock-box">
-    <div class="lock-icon" aria-hidden="true">🔒</div>
+    <div class="lock-icon" aria-hidden="true"><i data-icon="lock"></i></div>
     <h2>App bloqueada</h2>
     <p class="hint">Introduce el PIN para continuar.</p>
     <input type="password" id="lockPinInput" class="input lock-pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="••••">
@@ -257,6 +266,7 @@
 
 <!-- Scripts clásicos (comparten ámbito global), en orden de dependencia:
      app.js va el último porque arranca la app. -->
+<script src="js/icons.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/state.js"></script>
 <script src="js/ui.js"></script>

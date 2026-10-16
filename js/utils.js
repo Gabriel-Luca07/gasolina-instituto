@@ -15,7 +15,10 @@
      app.js       tema, PIN, banners, service worker y arranque
    ===================================================================== */
 
-const STORAGE_KEY = 'gasolinaInstitutoState_v1';
+// Con ?uitest (las pruebas de interfaz de tests-ui.html) la app usa otra
+// clave, para no tocar nunca los datos reales.
+const UI_TEST_MODE = /[?&]uitest\b/.test(location.search);
+const STORAGE_KEY = UI_TEST_MODE ? 'gasolinaInstitutoState_v1_uitest' : 'gasolinaInstitutoState_v1';
 
 /* ----------------------------- Utilidades ----------------------------- */
 

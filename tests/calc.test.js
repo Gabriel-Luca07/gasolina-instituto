@@ -156,6 +156,119 @@ test('las deudas mutuas entre dos conductores se netean', () => {
   assertClose(debt(s, 'luis', 'ana').amount, 2.25);
 });
 
+// Luis debe 4,5 a Ana (va en su coche) y Marta debe 4,5 a Luis (va en el suyo).
+function chainState(settleMode, settlements) {
+  return makeState({
+    settleMode,
+    cars: [
+      { id: 'c1', name: 'Coche de Ana', driverId: 'ana', consumption: 6 },
+      { id: 'c2', name: 'Coche de Luis', driverId: 'luis', consumption: 6 }
+    ],
+    period: period([day('2026-09-02', [
+      trip({ carId: 'c1', passengerIds: ['luis'] }),
+      trip({ carId: 'c2', passengerIds: ['marta'] })
+    ])], settlements)
+  });
+}
+
+test('modo persona a persona: cada pareja salda por separado', () => {
+  state = chainState('pairwise');
+  const s = computePeriodSummary(state.period);
+  assertEq(s.debts.length, 2);
+  assertClose(debt(s, 'luis', 'ana').amount, 4.5);
+  assertClose(debt(s, 'marta', 'luis').amount, 4.5);
+});
+
+test('modo simplificado: Marta paga directamente a Ana y Luis no paga nada', () => {
+  state = chainState('simplified');
+  const s = computePeriodSummary(state.period);
+  assertEq(s.debts.length, 1);
+  assertEq([s.debts[0].fromId, s.debts[0].toId], ['marta', 'ana']);
+  assertClose(s.debts[0].amount, 4.5);
+});
+
+test('modo simplificado: un pago registrado se descuenta del saldo', () => {
+  state = chainState('simplified', [{ id: 's', fromId: 'marta', toId: 'luis', amount: 4.5 }]);
+  const s = computePeriodSummary(state.period);
+  // Marta ya le dio 4,5 a Luis: ahora es Luis quien le debe 4,5 a Ana, y Marta nada.
+  assertEq(s.debts.length, 1);
+  assertEq([s.debts[0].fromId, s.debts[0].toId], ['luis', 'ana']);
+  assertClose(s.debts[0].amount, 4.5);
+});
+
+test('modo simplificado: el total que se paga cuadra con lo que se cobra', () => {
+  state = makeState({
+    settleMode: 'simplified',
+    cars: [
+      { id: 'c1', name: 'Coche de Ana', driverId: 'ana', consumption: 6 },
+      { id: 'c2', name: 'Coche de Luis', driverId: 'luis', consumption: 8, useOwnPrice: true, ownPrice: 2 }
+    ],
+    period: period([day('2026-09-02', [
+      trip({ carId: 'c1', passengerIds: ['luis', 'marta'] }),
+      trip({ carId: 'c2', km: 60, passengerIds: ['ana', 'marta'] })
+    ])])
+  });
+  const s = computePeriodSummary(state.period);
+  const net = {};
+  s.debts.forEach((d) => { net[d.fromId] = (net[d.fromId] || 0) - d.amount; net[d.toId] = (net[d.toId] || 0) + d.amount; });
+  const expected = {};
+  s.pairwiseDebts.forEach((d) => { expected[d.fromId] = (expected[d.fromId] || 0) - d.amount; expected[d.toId] = (expected[d.toId] || 0) + d.amount; });
+  ['ana', 'luis', 'marta'].forEach((id) => assertClose(net[id] || 0, expected[id] || 0, id));
+  if (s.debts.length > s.pairwiseDebts.length) throw new Error('simplificar no debería dar más pagos');
+});
+
+test('agrupar por pagador: cada persona sale una sola vez con su total', () => {
+  const g = groupDebtsByPayer([
+    { from: 'Marta', to: 'Ana', amount: 4 },
+    { from: 'Luis', to: 'Ana', amount: 1 },
+    { from: 'Marta', to: 'Luis', amount: 2 }
+  ]);
+  assertEq(g.map((x) => x.from), ['Marta', 'Luis']);
+  assertClose(g[0].total, 6);
+  assertEq(g[0].items.map((i) => i.to), ['Ana', 'Luis']);
+});
+
+test('detalle de trayectos: coste y reparto por persona, y por tramo si es ida y vuelta', () => {
+  state = makeState({
+    period: period([
+      day('2026-09-03', [trip({ roundTrip: true, passengerIds: ['luis'], returnPassengerIds: ['marta'] })]),
+      day('2026-09-02', [trip({ passengerIds: ['luis'] })])
+    ])
+  });
+  const d = buildTripDetails(state.period);
+  assertEq(d.map((x) => x.date), ['2026-09-02', '2026-09-03']);
+  assertClose(d[0].trips[0].cost, 9);
+  assertEq(d[0].trips[0].legs[0].shares.map((s) => s.name), ['Luis', 'Ana']);
+  assertClose(d[0].trips[0].legs[0].shares[0].share, 4.5);
+  assertEq(d[1].trips[0].legs.length, 2);
+  assertClose(d[1].trips[0].cost, 18);
+  assertEq(d[1].trips[0].legs[1].shares.map((s) => s.name), ['Marta', 'Ana']);
+});
+
+test('CSV del historial: cabecera, una fila por persona, decimales con coma y comillas', () => {
+  const entry = (id, range, start, perPerson) => ({
+    id, range, startDate: start, endDate: start, closedAt: start,
+    summary: { totalCost: 12.5, tripCount: 3, totalKm: 100, perCar: [], perPerson }
+  });
+  const csv = buildHistoryCSV([
+    entry('b', '5 oct', '2026-10-05', [{ personId: 'ana', name: 'Ana "la jefa"', share: 12.5 }]),
+    entry('a', '28 sep', '2026-09-28', [{ personId: 'ana', name: 'Ana', share: 7.25 }, { personId: 'luis', name: 'Luis', share: 5.25 }])
+  ]);
+  const lines = csv.replace('﻿', '').trim().split('\r\n');
+  assertEq(lines.length, 4);
+  assertEq(lines[0], 'Periodo;Inicio;Fin;Cerrado el;Persona;Consumo (€);Total del periodo (€);Km;Trayectos');
+  assertEq(lines[1].split(';').slice(4, 6), ['Ana', '7,25']); // el más antiguo primero
+  assertEq(lines[3].split(';')[4], '"Ana ""la jefa"""');
+  assertEq(csv.charAt(0), '﻿');
+});
+
+test('importar conserva el modo de deudas y uno desconocido vuelve a persona a persona', () => {
+  const raw = JSON.parse(JSON.stringify(makeState({ settleMode: 'simplified' })));
+  assertEq(sanitizeImportedState(raw).state.settleMode, 'simplified');
+  raw.settleMode = 'otro';
+  assertEq(sanitizeImportedState(raw).state.settleMode, 'pairwise');
+});
+
 test('un pago registrado resta de la deuda', () => {
   state = makeState({ period: period([day('2026-09-02', [trip({ passengerIds: ['luis'] })])], [{ id: 's', fromId: 'luis', toId: 'ana', amount: 1.5 }]) });
   const s = computePeriodSummary(state.period);

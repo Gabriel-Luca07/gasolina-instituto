@@ -20,7 +20,7 @@
 }
 
 /* Modo oscuro automático (sigue al sistema) cuando el usuario no ha elegido
-   uno explícitamente con el botón 🌓 del encabezado. */
+   uno explícitamente con el botón del icono de tema del encabezado. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0a0f1c;
@@ -836,3 +836,63 @@ main { padding: 12px 14px 24px; max-width: 640px; margin: 0 auto; }
   40%, 60% { transform: translateX(8px); }
 }
 .lock-box.shake { animation: lockShake 0.4s; }
+
+/* ===================== Iconos (SVG de trazo fino) ===================== */
+.icon {
+  width: 1.2em;
+  height: 1.2em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+button > i, .app-logo > i, .tab-icon > i, .lock-icon > i { display: inline-flex; font-style: normal; }
+.icon-inline { display: inline-flex; font-style: normal; vertical-align: -0.2em; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.btn .icon { width: 18px; height: 18px; }
+
+.app-logo {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), #1e3a8a);
+  box-shadow: 0 2px 8px rgba(30, 64, 175, 0.35);
+}
+.app-logo .icon { width: 19px; height: 19px; stroke-width: 1.7; }
+
+.theme-toggle-btn .icon, .lock-now-btn .icon { width: 18px; height: 18px; }
+.icon-btn .icon { width: 19px; height: 19px; }
+.tab-btn .tab-icon { display: inline-flex; }
+.tab-btn .tab-icon .icon { width: 23px; height: 23px; stroke-width: 1.6; }
+.lock-icon { color: var(--primary); display: flex; justify-content: center; }
+.lock-icon .icon { width: 40px; height: 40px; stroke-width: 1.5; }
+
+.item-row-title .icon, .trip-row-car .icon, .summary-item-name .icon, .wizard-option-title .icon, .field-toggle .icon {
+  width: 16px; height: 16px; margin-right: 4px; vertical-align: -0.2em; color: var(--text-muted);
+}
+.dashboard-stale-notice .icon { width: 15px; height: 15px; margin-right: 6px; vertical-align: -0.2em; color: #fbbf24; }
+.empty-state .icon { width: 18px; height: 18px; margin-right: 6px; vertical-align: -0.25em; color: var(--primary); }
+
+.step-num {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+/* Pestaña activa: píldora suave detrás del icono. */
+.tab-btn .tab-icon { padding: 3px 16px; border-radius: 14px; transition: background-color 0.2s ease, transform 0.2s ease; }
+.tab-btn.active .tab-icon { background: color-mix(in srgb, var(--primary) 16%, transparent); transform: none; }
+.tab-btn.active .tab-icon .icon { stroke-width: 2.1; }
+#exportHistoryCsvBtn { margin-bottom: 0; }

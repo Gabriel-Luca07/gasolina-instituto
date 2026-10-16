@@ -23,7 +23,7 @@ function showToast(msg) {
   toastTimer = setTimeout(hideToast, 2600);
 }
 
-function showUndoToast(msg, onUndo) {
+function showUndoToast(msg, onUndo, durationMs) {
   hideToast();
   const el = qs('#toast');
   const btn = qs('#toastUndoBtn');
@@ -33,7 +33,7 @@ function showUndoToast(msg, onUndo) {
   toastUndoHandler = () => { hideToast(); clearTimeout(toastTimer); onUndo(); };
   btn.addEventListener('click', toastUndoHandler);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(hideToast, 6000);
+  toastTimer = setTimeout(hideToast, durationMs || 6000);
 }
 
 /* -------------------------------- Modal --------------------------------- */

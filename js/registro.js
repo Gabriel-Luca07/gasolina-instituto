@@ -91,9 +91,9 @@ function toggleMultiSelectDate(date) {
 }
 
 function updateMultiSelectUI() {
-  qs('#toggleMultiSelectBtn').textContent = multiSelectMode
-    ? '✕ Cancelar selección múltiple'
-    : '☑️ Seleccionar varios días para el mismo trayecto';
+  qs('#toggleMultiSelectBtn').innerHTML = multiSelectMode
+    ? `${icon('x')} Cancelar selección múltiple`
+    : `${icon('check-square')} Seleccionar varios días para el mismo trayecto`;
   qs('#multiSelectBar').classList.toggle('hidden', !multiSelectMode);
   qs('#addDaysHint').classList.toggle('hidden', multiSelectMode);
   qs('#multiSelectCount').textContent = `${multiSelectDates.size} día(s) seleccionado(s)`;
@@ -241,11 +241,11 @@ function renderRegistroDashboard() {
     return;
   }
 
-  const topDebt = (summary.pairwiseDebts || [])[0];
+  const topDebt = debtsOf(summary)[0];
   const OPEN_PERIOD_WARN_DAYS = 10;
   const daysOpen = Math.round((parseISODate(todayISO()) - parseISODate(state.period.createdAt)) / 86400000);
   const staleWarning = daysOpen >= OPEN_PERIOD_WARN_DAYS
-    ? `<div class="dashboard-stale-notice">⏳ Llevas ${daysOpen} días con este periodo abierto. Considera cerrarlo desde Resumen para no acumular demasiado.</div>`
+    ? `<div class="dashboard-stale-notice">${icon('hourglass')} Llevas ${daysOpen} días con este periodo abierto. Considera cerrarlo desde Resumen para no acumular demasiado.</div>`
     : '';
 
   el.innerHTML = `
@@ -277,10 +277,10 @@ function renderOnboarding() {
 
   qs('#onboardingSteps').innerHTML = needsPerson ? `
     <p class="hint" style="margin:0 0 14px;">Para repartir gastos hacen falta al menos una persona y un coche. Empieza añadiendo a las personas del grupo (tú incluido/a).</p>
-    <button type="button" class="btn btn-primary btn-block" id="onboardingAddPersonBtn">1️⃣ Añadir primera persona</button>
+    <button type="button" class="btn btn-primary btn-block" id="onboardingAddPersonBtn"><span class="step-num">1</span> Añadir primera persona</button>
   ` : `
     <p class="hint" style="margin:0 0 14px;">Ya tienes gente en el grupo. Ahora añade el coche que vais a compartir (y quién lo conduce).</p>
-    <button type="button" class="btn btn-primary btn-block" id="onboardingAddCarBtn">2️⃣ Añadir primer coche</button>
+    <button type="button" class="btn btn-primary btn-block" id="onboardingAddCarBtn"><span class="step-num">2</span> Añadir primer coche</button>
   `;
   if (needsPerson) {
     qs('#onboardingAddPersonBtn').addEventListener('click', () => openPersonModal(null));
@@ -328,8 +328,8 @@ function renderRegistro() {
             <div class="day-card-subtitle">${day.trips.length} trayecto(s) · ${esc(formatEUR(dayCost))}</div>
           </div>
           <div class="day-card-actions">
-            ${idx > 0 ? `<button type="button" class="icon-btn" data-action="copy-day" title="Copiar día anterior">📋</button>` : ''}
-            <button type="button" class="icon-btn danger" data-action="remove-day" title="Eliminar día">🗑</button>
+            ${idx > 0 ? `<button type="button" class="icon-btn" data-action="copy-day" aria-label="Copiar dÃ­a anterior" title="Copiar día anterior">${icon('copy')}</button>` : ''}
+            <button type="button" class="icon-btn danger" data-action="remove-day" aria-label="Eliminar dÃ­a" title="Eliminar día">${icon('trash')}</button>
           </div>
         </div>
         <div class="day-card-body">
@@ -343,7 +343,7 @@ function renderRegistro() {
 function renderTripRow(day, trip, idx) {
   const car = state.cars.find((c) => c.id === trip.carId);
   if (!car) {
-    return `<div class="trip-row"><em class="hint">Coche eliminado. <button type="button" class="icon-btn danger" data-action="remove-trip" data-trip-id="${trip.id}">🗑</button></em></div>`;
+    return `<div class="trip-row"><em class="hint">Coche eliminado. <button type="button" class="icon-btn danger" data-action="remove-trip" aria-label="Eliminar trayecto" data-trip-id="${trip.id}">${icon('trash')}</button></em></div>`;
   }
   const driver = state.people.find((p) => p.id === car.driverId);
   const cost = computeTripDisplayCost(trip);
@@ -377,7 +377,7 @@ function renderTripRow(day, trip, idx) {
     <div class="trip-row" data-trip-id="${trip.id}">
       <div class="trip-row-top">
         <div>
-          <div class="trip-row-car">🚗 ${esc(car.name)}${archivedTagHTML(state.cars, car.id)}</div>
+          <div class="trip-row-car">${icon('car')} ${esc(car.name)}${archivedTagHTML(state.cars, car.id)}</div>
           <div class="trip-row-meta">${esc(metaKm)} · ${esc(metaPrice)} · conduce ${esc(driver ? driver.name : '—')}</div>
         </div>
         <div class="trip-row-cost">${esc(formatEUR(cost))}</div>
@@ -385,8 +385,8 @@ function renderTripRow(day, trip, idx) {
       <div class="trip-row-people">${peopleHTML}</div>
       <div class="trip-row-buttons">
         ${day.trips.length > 1 ? `
-          <button type="button" class="icon-btn reorder-btn" data-action="move-trip-up" ${idx === 0 ? 'disabled' : ''} title="Subir">▲</button>
-          <button type="button" class="icon-btn reorder-btn" data-action="move-trip-down" ${idx === day.trips.length - 1 ? 'disabled' : ''} title="Bajar">▼</button>
+          <button type="button" class="icon-btn reorder-btn" data-action="move-trip-up" aria-label="Subir trayecto" ${idx === 0 ? 'disabled' : ''} title="Subir">${icon('chevron-up')}</button>
+          <button type="button" class="icon-btn reorder-btn" data-action="move-trip-down" aria-label="Bajar trayecto" ${idx === day.trips.length - 1 ? 'disabled' : ''} title="Bajar">${icon('chevron-down')}</button>
         ` : ''}
         <button type="button" class="btn btn-secondary btn-sm" data-action="edit-trip">Editar</button>
         <button type="button" class="btn btn-secondary btn-sm" data-action="duplicate-trip">Duplicar</button>
@@ -546,7 +546,7 @@ function openTripModal(dayId, tripId, batchDates) {
             const driver = state.people.find((p) => p.id === c.driverId);
             return `
             <button type="button" class="wizard-option ${selection.carId === c.id ? 'selected' : ''}" data-car-id="${c.id}">
-              <span class="wizard-option-title">🚗 ${esc(c.name)}${archivedTagHTML(state.cars, c.id)}</span>
+              <span class="wizard-option-title">${icon('car')} ${esc(c.name)}${archivedTagHTML(state.cars, c.id)}</span>
               <span class="wizard-option-sub">Conduce ${esc(driver ? driver.name : '—')} · ${c.consumption} L/100km</span>
             </button>`;
           }).join('')}
@@ -556,7 +556,7 @@ function openTripModal(dayId, tripId, batchDates) {
         <h3 class="wizard-title">Paso 2 de 3 · ¿Cuántos km?</h3>
         <label class="field-toggle" style="margin-bottom:14px;">
           <input type="checkbox" id="roundTripToggle" ${selection.roundTrip ? 'checked' : ''}>
-          <span>🔁 Es de ida y vuelta</span>
+          <span>${icon('repeat')} Es de ida y vuelta</span>
         </label>
         ${state.savedTrips.length ? `
           <p class="hint" style="margin:0 0 8px;">Trayectos guardados:</p>
@@ -604,7 +604,7 @@ function openTripModal(dayId, tripId, batchDates) {
         ${passengerCandidates.length ? `
           <label class="field-toggle" style="margin:14px 0 6px;">
             <input type="checkbox" id="weightedToggle" ${selection.useWeights ? 'checked' : ''}>
-            <span>⚖️ Repartir en partes distintas (no a partes iguales)</span>
+            <span>${icon('scale')} Repartir en partes distintas (no a partes iguales)</span>
           </label>
           ${selection.useWeights ? `<p class="hint" style="margin:0 0 10px;">Cuántas "partes" paga cada uno: 1 es lo normal, 2 el doble, etc. El conductor siempre cuenta como 1 parte.</p>` : ''}
         ` : ''}

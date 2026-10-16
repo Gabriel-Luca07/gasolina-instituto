@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pruebas de interfaz · Gastos Coche</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 760px; padding: 16px; background: #f8fafc; color: #0f172a; }
+  h1 { font-size: 20px; }
+  #summary { padding: 10px 14px; border-radius: 8px; font-weight: 700; }
+  .ok { background: #dcfce7; color: #14532d; }
+  .fail { background: #fee2e2; color: #7f1d1d; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 4px 8px; border-bottom: 1px solid #e2e8f0; }
+  li.fail pre { margin: 4px 0 0; white-space: pre-wrap; font-size: 12.5px; }
+  iframe { width: 420px; height: 700px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { background: #0f172a; color: #e2e8f0; } li { border-color: #334155; } }
+</style>
+</head>
+<body>
+<h1>Pruebas de interfaz · Gastos Coche</h1>
+<p>Cargan la app real en el marco de abajo con <code>?uitest</code>, que usa otra clave de almacenamiento: no leen ni modifican tus datos guardados. Se abre desde un servidor local, igual que <code>tests.html</code>.</p>
+<div id="summary">Ejecutando…</div>
+<ul id="results"></ul>
+<iframe id="appFrame" title="App bajo prueba"></iframe>
+
+<script src="tests/ui.test.js"></script>
+</body>
+</html>

@@ -108,6 +108,7 @@ function renderHistorial() {
   const clearBtn = qs('#clearHistoryBtn');
 
   clearBtn.classList.toggle('hidden', state.history.length === 0);
+  qs('#exportHistoryCsvBtn').classList.toggle('hidden', state.history.length === 0);
 
   if (state.history.length > 0) {
     const aggregate = computeHistoryAggregate();
@@ -167,6 +168,11 @@ qs('#historyList').addEventListener('click', (e) => {
       }
     });
   }
+});
+
+qs('#exportHistoryCsvBtn').addEventListener('click', async () => {
+  const how = await saveOrShareTextFile(`gastos-coche-historial-${todayISO()}.csv`, buildHistoryCSV(state.history), 'text/csv');
+  showToast(how === 'shared' ? 'CSV listo' : 'CSV descargado');
 });
 
 qs('#clearHistoryBtn').addEventListener('click', () => {

@@ -52,6 +52,31 @@ function freezeUnratedTrips() {
   }));
   if (changed) saveState();
 }
+// Reparto de un tramo (un trayecto normal es uno; uno de ida y vuelta, dos):
+// coste del tramo y parte de cada persona.
+function splitTripLeg(trip, car, legPassengerIds) {
+  const cost = computeTripCost(trip, car);
+
+  const splitSet = new Set((legPassengerIds || []).filter((id) => state.people.some((p) => p.id === id)));
+  if (state.driverPays) splitSet.add(car.driverId);
+  if (splitSet.size === 0) splitSet.add(car.driverId);
+
+  // Reparto por "partes": quien no tenga un peso propio en trip.weights
+  // cuenta como 1 parte (el reparto a partes iguales de siempre). Con
+  // pesos iguales para todos esto da exactamente lo mismo que antes.
+  const weights = trip.weights || {};
+  const totalWeight = [...splitSet].reduce((sum, pid) => sum + (weights[pid] || 1), 0);
+
+  const shares = [...splitSet].map((pid) => ({ personId: pid, share: cost * (weights[pid] || 1) / totalWeight }));
+  return { cost, shares };
+}
+
+function tripLegs(trip) {
+  return trip.roundTrip
+    ? [trip.passengerIds, trip.returnPassengerIds || trip.passengerIds]
+    : [trip.passengerIds];
+}
+
 function computePeriodSummary(period) {
   const perCarMap = new Map();
   const shareMap = new Map();
@@ -67,12 +92,8 @@ function computePeriodSummary(period) {
 
       // Un trayecto normal es un solo tramo; uno de ida y vuelta son dos tramos
       // (mismo coche y km, pero cada uno con sus propios pasajeros y su propio coste).
-      const legs = trip.roundTrip
-        ? [trip.passengerIds, trip.returnPassengerIds || trip.passengerIds]
-        : [trip.passengerIds];
-
-      legs.forEach((legPassengerIds) => {
-        const cost = computeTripCost(trip, car);
+      tripLegs(trip).forEach((legPassengerIds) => {
+        const { cost, shares } = splitTripLeg(trip, car, legPassengerIds);
         totalCost += cost;
         tripCount++;
 
@@ -82,18 +103,7 @@ function computePeriodSummary(period) {
         agg.totalKm += (trip.km || 0);
         agg.tripCount++;
 
-        let splitSet = new Set((legPassengerIds || []).filter((id) => state.people.some((p) => p.id === id)));
-        if (state.driverPays) splitSet.add(car.driverId);
-        if (splitSet.size === 0) splitSet.add(car.driverId);
-
-        // Reparto por "partes": quien no tenga un peso propio en trip.weights
-        // cuenta como 1 parte (el reparto a partes iguales de siempre). Con
-        // pesos iguales para todos esto da exactamente lo mismo que antes.
-        const weights = trip.weights || {};
-        const totalWeight = [...splitSet].reduce((sum, pid) => sum + (weights[pid] || 1), 0);
-
-        splitSet.forEach((pid) => {
-          const share = cost * (weights[pid] || 1) / totalWeight;
+        shares.forEach(({ personId: pid, share }) => {
           if (shareMap.has(pid)) shareMap.set(pid, shareMap.get(pid) + share);
           if (pid !== car.driverId && state.people.some((p) => p.id === pid)) {
             const key = `${pid}|${car.driverId}`;
@@ -150,9 +160,95 @@ function computePeriodSummary(period) {
       : { from: p.bName, to: p.aName, fromId: p.bId, toId: p.aId, amount: -p.amount }))
     .sort((a, b) => b.amount - a.amount);
 
+  const simplifiedDebts = simplifyDebts(pairDebts);
+  const debts = state.settleMode === 'simplified' ? simplifiedDebts : pairwiseDebts;
+
   const totalKm = perCar.reduce((sum, c) => sum + (c.totalKm || 0), 0);
 
-  return { totalCost, tripCount, dayCount, totalKm, perCar, perPerson, pairwiseBalances, pairwiseDebts };
+  return { totalCost, tripCount, dayCount, totalKm, perCar, perPerson, pairwiseBalances, pairwiseDebts, simplifiedDebts, debts };
+}
+
+// Modo "simplificado": en vez de saldar cada pareja por separado, se calcula
+// el saldo neto de cada persona (lo que debe menos lo que le deben) y se
+// emparejan deudores con acreedores de mayor a menor. Así se hacen los
+// mínimos pagos posibles: si A debe a B y B debe a C, A le paga a C y B
+// no tiene que hacer nada.
+function simplifyDebts(pairDebts) {
+  const balance = new Map(); // + = le deben, - = debe
+  pairDebts.forEach((amount, key) => {
+    const [debtorId, creditorId] = key.split('|');
+    balance.set(debtorId, (balance.get(debtorId) || 0) - amount);
+    balance.set(creditorId, (balance.get(creditorId) || 0) + amount);
+  });
+  const nameOf = (id) => (state.people.find((p) => p.id === id) || {}).name || '?';
+  const side = (sign) => [...balance.entries()]
+    .filter(([, v]) => v * sign > 0.005)
+    .map(([id, v]) => ({ id, left: Math.abs(v) }))
+    .sort((a, b) => b.left - a.left);
+  const debtors = side(-1);
+  const creditors = side(1);
+
+  const result = [];
+  let i = 0, j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const amount = Math.min(debtors[i].left, creditors[j].left);
+    if (amount > 0.005) {
+      result.push({ from: nameOf(debtors[i].id), to: nameOf(creditors[j].id), fromId: debtors[i].id, toId: creditors[j].id, amount });
+    }
+    debtors[i].left -= amount;
+    creditors[j].left -= amount;
+    if (debtors[i].left <= 0.005) i++;
+    if (creditors[j].left <= 0.005) j++;
+  }
+  return result.sort((a, b) => b.amount - a.amount);
+}
+
+// Deudas a mostrar según el modo elegido. Los periodos del Historial cerrados
+// antes de existir el modo solo traen las de persona a persona.
+function debtsOf(summary) {
+  return summary.debts || summary.pairwiseDebts || [];
+}
+
+// Agrupa las deudas por quien paga: cada pagador sale una sola vez, con los
+// que tiene que pagar y su total. Es lo que se comparte como tabla.
+function groupDebtsByPayer(debts) {
+  const groups = new Map();
+  debts.forEach((d) => {
+    const g = groups.get(d.from) || { from: d.from, total: 0, items: [] };
+    g.total += d.amount;
+    g.items.push({ to: d.to, amount: d.amount });
+    groups.set(d.from, g);
+  });
+  return [...groups.values()]
+    .map((g) => ({ ...g, items: g.items.sort((a, b) => b.amount - a.amount) }))
+    .sort((a, b) => b.total - a.total || a.from.localeCompare(b.from));
+}
+
+// Detalle del periodo para compartir: por día y trayecto, qué coche, cuántos
+// km, cuánto cuesta y cuánto paga cada persona (por tramo si es ida y vuelta).
+function buildTripDetails(period) {
+  const nameOf = (id) => (state.people.find((p) => p.id === id) || {}).name || '?';
+  return getSortedDays(period)
+    .map((day) => ({
+      date: day.date,
+      trips: day.trips.map((trip) => {
+        const car = state.cars.find((c) => c.id === trip.carId);
+        if (!car) return null;
+        const legs = tripLegs(trip).map((ids) => {
+          const { cost, shares } = splitTripLeg(trip, car, ids);
+          return { cost, shares: shares.map((s) => ({ name: nameOf(s.personId), share: s.share })) };
+        });
+        return {
+          carName: car.name,
+          driverName: nameOf(car.driverId),
+          km: trip.km || 0,
+          roundTrip: !!trip.roundTrip,
+          cost: legs.reduce((sum, l) => sum + l.cost, 0),
+          legs
+        };
+      }).filter(Boolean)
+    }))
+    .filter((d) => d.trips.length > 0);
 }
 
 function computeHistoryAggregate() {
@@ -204,6 +300,32 @@ function computeHistoryAggregate() {
     .sort((a, b) => b.amount - a.amount);
 
   return { ...totals, perCar, perPerson, pairwiseDebts };
+}
+
+// CSV del Historial para abrir en Excel/Hojas de cálculo: una fila por
+// persona y periodo cerrado (más antiguo primero). Separador ";" y decimales
+// con coma, que es lo que espera una hoja en español; el BOM del principio
+// hace que Excel respete los acentos.
+function buildHistoryCSV(history) {
+  const num = (n) => (Number(n) || 0).toFixed(2).replace('.', ',');
+  const cell = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[";\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const km = (s) => (typeof s.totalKm === 'number' ? s.totalKm : (s.perCar || []).reduce((sum, c) => sum + (c.totalKm || 0), 0));
+
+  const rows = [['Periodo', 'Inicio', 'Fin', 'Cerrado el', 'Persona', 'Consumo (€)', 'Total del periodo (€)', 'Km', 'Trayectos']];
+  [...history]
+    .sort((a, b) => (a.startDate || a.closedAt || '').localeCompare(b.startDate || b.closedAt || ''))
+    .forEach((h) => {
+      const s = h.summary || {};
+      const people = (s.perPerson || []).length ? s.perPerson : [{ name: '', share: 0 }];
+      people.forEach((p) => rows.push([
+        h.range || '', h.startDate || '', h.endDate || '', h.closedAt || '',
+        p.name, num(p.share), num(s.totalCost), num(km(s)), s.tripCount || 0
+      ]));
+    });
+  return '﻿' + rows.map((r) => r.map(cell).join(';')).join('\r\n') + '\r\n';
 }
 
 function getSortedDays(period) {
@@ -415,6 +537,7 @@ function sanitizeImportedState(raw) {
       // comparte o se guarda en otro sitio, no queremos propagar (ni
       // bloquear al usuario con) un PIN que no acaba de teclear él mismo.
       pin: null,
+      settleMode: raw.settleMode === 'simplified' ? 'simplified' : 'pairwise',
       refuels,
       lastBackupAt: isISODate(raw.lastBackupAt) ? raw.lastBackupAt : null,
       // Recién importada, la copia está a salvo en el archivo de origen.

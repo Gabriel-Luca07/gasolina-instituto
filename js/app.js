@@ -6,7 +6,7 @@
    Tema (claro / oscuro / automático)
    ===================================================================== */
 
-const THEME_ICONS = { auto: '🌓', light: '☀️', dark: '🌙' };
+const THEME_ICONS = { auto: 'contrast', light: 'sun', dark: 'moon' };
 const THEME_LABELS = { auto: 'Automático (según el sistema)', light: 'Claro', dark: 'Oscuro' };
 
 function applyTheme() {
@@ -17,7 +17,7 @@ function applyTheme() {
     root.setAttribute('data-theme', state.theme);
   }
   const btn = qs('#themeToggleBtn');
-  btn.textContent = THEME_ICONS[state.theme];
+  btn.innerHTML = icon(THEME_ICONS[state.theme]);
   btn.setAttribute('aria-label', `Tema: ${THEME_LABELS[state.theme]}. Toca para cambiar.`);
 }
 
@@ -180,7 +180,7 @@ function showUpdateBanner(worker) {
 }
 
 function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
+  if (!('serviceWorker' in navigator) || UI_TEST_MODE) return;
 
   window.addEventListener('load', async () => {
     try {

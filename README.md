@@ -40,15 +40,20 @@ git config core.hooksPath .githooks
 
 `tests.html` prueba el cálculo (`js/calc.js`): costes, reparto, pesos, deudas, pagos, consumo real, recordatorios e importación. Ábrelo en el navegador desde un servidor local (por ejemplo `python -m http.server` o la extensión Live Server de VS Code) y ejecútalo después de tocar cualquier cálculo: arriba sale en verde o en rojo, con el detalle de lo que falla.
 
+`tests-ui.html` prueba la interfaz: carga la app real en un marco con `?uitest` (usa otra clave de almacenamiento, así que no toca tus datos) y la maneja como un usuario: cambiar de pestaña, compartir como imagen o texto, modo simplificado, cerrar periodo y deshacer, pagos parciales, exportar copia y CSV, sin emojis y con nombres accesibles en los botones de icono. Se abre igual, desde un servidor local.
+
 ## Copia de seguridad de los datos
 
-Desde **Configuración → Datos** puedes exportar todos tus datos a un archivo `.json` y volver a importarlos en otro dispositivo o después de borrar el navegador. No hay ningún servidor: si borras los datos del navegador sin haber exportado antes, se pierden.
+Desde **Configuración → Datos** puedes exportar todos tus datos a un archivo `.json` y volver a importarlos en otro dispositivo o después de borrar el navegador. En el móvil se abre la bandeja de compartir para guardarlo en Archivos, iCloud o mandarlo por WhatsApp; en el ordenador se descarga. Al **cerrar un periodo** se ofrece guardar una copia en el mismo paso (viene marcada si hoy aún no hiciste ninguna), y el cierre se puede deshacer durante unos segundos. No hay ningún servidor: si borras los datos del navegador sin haber exportado antes, se pierden.
+
+El **Historial** se puede exportar a CSV (una fila por persona y periodo, con `;` y decimales con coma) para abrirlo directamente en Excel u Hojas de cálculo.
 
 ## Estructura del proyecto
 
 ```
 index.html          Estructura de la app (4 pantallas: Registro, Resumen, Configuración, Historial)
 css/styles.css       Estilos, mobile-first, modo claro/oscuro (automático o manual)
+js/icons.js          Iconos SVG de trazo fino (en el DOM y en la imagen compartida)
 js/utils.js          Utilidades de fechas, formato y DOM
 js/state.js          Estado y guardado en localStorage
 js/ui.js             Toast, modales, pestañas y gestos
@@ -59,6 +64,7 @@ js/historial.js      Pestaña Historial
 js/config.js         Pestaña Configuración
 js/app.js            Tema, PIN, banners, service worker y arranque
 tests.html           Pruebas del cálculo (tests/calc.test.js)
+tests-ui.html        Pruebas de la interfaz (tests/ui.test.js)
 manifest.json        Manifest de la PWA
 sw.js                Service worker (caché offline)
 icons/               Iconos de la app en varios tamaños

@@ -12,6 +12,8 @@ function createDefaultState() {
     globalPrice: 1.65,
     savedTrips: [],
     driverPays: true,
+    // 'pairwise' = persona a persona; 'simplified' = pagos mínimos entre todos.
+    settleMode: 'pairwise',
     period: { id: uid(), createdAt: todayISO(), days: [] },
     history: [],
     lastTrip: null,
@@ -42,6 +44,7 @@ function loadState() {
     if (!Array.isArray(parsed.cars)) parsed.cars = [];
     if (typeof parsed.globalPrice !== 'number') parsed.globalPrice = 1.65;
     if (typeof parsed.driverPays !== 'boolean') parsed.driverPays = true;
+    if (!['pairwise', 'simplified'].includes(parsed.settleMode)) parsed.settleMode = 'pairwise';
     if (!['auto', 'light', 'dark'].includes(parsed.theme)) parsed.theme = 'auto';
     if (!(/^\d{4}$/.test(parsed.pin))) parsed.pin = null;
     if (!Array.isArray(parsed.refuels)) parsed.refuels = [];

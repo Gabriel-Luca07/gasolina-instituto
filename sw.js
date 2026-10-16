@@ -2,11 +2,12 @@
 // IMPORTANTE: sube CACHE_VERSION cada vez que cambies cualquier archivo de la
 // app. Es lo único que hace que el navegador detecte una versión nueva y
 // muestre el aviso "Actualizar"; si no, el móvil sigue sirviendo la caché vieja.
-const CACHE_VERSION = 'gasolina-v2';
+const CACHE_VERSION = 'gasolina-v3';
 const APP_SHELL = [
   './',
   './index.html',
   './css/styles.css',
+  './js/icons.js',
   './js/utils.js',
   './js/state.js',
   './js/ui.js',

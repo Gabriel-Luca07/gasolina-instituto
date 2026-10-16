@@ -53,8 +53,8 @@ function renderPeople() {
         ${drivesCarNames.length ? `<div class="item-row-sub">Conduce: ${esc(drivesCarNames.join(', '))}</div>` : ''}
       </div>
       <div class="item-row-actions">
-        <button type="button" class="icon-btn" data-action="edit-person">✏️</button>
-        <button type="button" class="icon-btn danger" data-action="delete-person">🗑</button>
+        <button type="button" class="icon-btn" data-action="edit-person" aria-label="Editar persona">${icon('pencil')}</button>
+        <button type="button" class="icon-btn danger" data-action="delete-person" aria-label="Eliminar persona">${icon('trash')}</button>
       </div>
     </div>`;
   }).join('');
@@ -156,19 +156,19 @@ function renderCars() {
   const list = qs('#carsList');
   const cars = activeCars();
   qs('#carsEmptyState').classList.toggle('hidden', cars.length > 0);
-  renderArchivedSection('#archivedCars', state.cars.filter((c) => c.archived), 'Coches eliminados', (c) => `🚗 ${esc(c.name)}`);
+  renderArchivedSection('#archivedCars', state.cars.filter((c) => c.archived), 'Coches eliminados', (c) => `${icon('car')} ${esc(c.name)}`);
   list.innerHTML = cars.map((c) => {
     const driver = state.people.find((p) => p.id === c.driverId);
     const priceLabel = c.useOwnPrice && c.ownPrice ? `${c.ownPrice} €/L propio` : 'precio general';
     return `
     <div class="item-row" data-id="${c.id}">
       <div class="item-row-main">
-        <div class="item-row-title">🚗 ${esc(c.name)}</div>
+        <div class="item-row-title">${icon('car')} ${esc(c.name)}</div>
         <div class="item-row-sub">Conductor: ${esc(driver ? driver.name : '—')} · ${c.consumption} L/100km · ${esc(priceLabel)}</div>
       </div>
       <div class="item-row-actions">
-        <button type="button" class="icon-btn" data-action="edit-car">✏️</button>
-        <button type="button" class="icon-btn danger" data-action="delete-car">🗑</button>
+        <button type="button" class="icon-btn" data-action="edit-car" aria-label="Editar coche">${icon('pencil')}</button>
+        <button type="button" class="icon-btn danger" data-action="delete-car" aria-label="Eliminar coche">${icon('trash')}</button>
       </div>
     </div>`;
   }).join('');
@@ -289,6 +289,7 @@ function renderConfigMisc() {
   qs('#globalPriceInput').value = state.globalPrice;
   qs('#driverPaysToggle').checked = state.driverPays;
   qs('#closeReminderSelect').value = String(state.closeReminderDays);
+  qs('#settleModeSelect').value = state.settleMode;
   renderSecurityCard();
 }
 
@@ -304,6 +305,13 @@ qs('#driverPaysToggle').addEventListener('change', (e) => {
   state.driverPays = e.target.checked;
   saveState();
   renderRegistro();
+});
+
+qs('#settleModeSelect').addEventListener('change', (e) => {
+  state.settleMode = e.target.value === 'simplified' ? 'simplified' : 'pairwise';
+  saveState();
+  renderRegistro();
+  renderResumen();
 });
 
 qs('#closeReminderSelect').addEventListener('change', (e) => {
@@ -327,12 +335,12 @@ function renderRefuels() {
     return `
     <div class="item-row" data-id="${r.id}">
       <div class="item-row-main">
-        <div class="item-row-title">🚗 ${esc(car ? car.name : 'Coche eliminado')} · ${esc(formatEUR(r.amount))}</div>
+        <div class="item-row-title">${icon('car')} ${esc(car ? car.name : 'Coche eliminado')} · ${esc(formatEUR(r.amount))}</div>
         <div class="item-row-sub">${esc(formatDateShort(r.date))} · ${esc(formatLiters(r.liters))} ·${esc(formatPricePerL(r.amount / r.liters))}</div>
       </div>
       <div class="item-row-actions">
-        ${car ? '<button type="button" class="icon-btn" data-action="edit-refuel">✏️</button>' : ''}
-        <button type="button" class="icon-btn danger" data-action="delete-refuel">🗑</button>
+        ${car ? `<button type="button" class="icon-btn" data-action="edit-refuel" aria-label="Editar repostaje">${icon('pencil')}</button>` : ''}
+        <button type="button" class="icon-btn danger" data-action="delete-refuel" aria-label="Eliminar repostaje">${icon('trash')}</button>
       </div>
     </div>`;
   }).join('') + (refuels.length > 10 ? `<p class="hint" style="margin:4px 0 0;">Mostrando los 10 más recientes de ${refuels.length}.</p>` : '');
@@ -350,7 +358,7 @@ function renderRefuels() {
         return `
         <div class="item-row" data-car-id="${car.id}">
           <div class="item-row-main">
-            <div class="item-row-title">🚗 ${esc(car.name)}: ${esc(formatConsumption(real.consumption))}</div>
+            <div class="item-row-title">${icon('car')} ${esc(car.name)}: ${esc(formatConsumption(real.consumption))}</div>
             <div class="item-row-sub">${esc(formatLiters(real.liters))} en${esc(formatKm(real.km))} · tienes puesto ${esc(formatConsumption(car.consumption))}</div>
           </div>
           ${differs ? '<button type="button" class="btn btn-secondary btn-sm" data-action="use-real-consumption">Usar este</button>' : ''}
@@ -480,8 +488,8 @@ function renderSavedTrips() {
         <div class="item-row-sub">${esc(formatKm(s.km))}</div>
       </div>
       <div class="item-row-actions">
-        <button type="button" class="icon-btn" data-action="edit-saved">✏️</button>
-        <button type="button" class="icon-btn danger" data-action="delete-saved">🗑</button>
+        <button type="button" class="icon-btn" data-action="edit-saved" aria-label="Editar trayecto guardado">${icon('pencil')}</button>
+        <button type="button" class="icon-btn danger" data-action="delete-saved" aria-label="Eliminar trayecto guardado">${icon('trash')}</button>
       </div>
     </div>`).join('');
 }
@@ -546,9 +554,29 @@ function deleteSavedTrip(trip) {
    CONFIGURACIÓN: Datos (exportar / importar / borrar)
    ===================================================================== */
 
-qs('#exportDataBtn').addEventListener('click', exportBackup);
+qs('#exportDataBtn').addEventListener('click', () => exportBackup());
 
-function exportBackup() {
+// Descarga un archivo de texto (o lo comparte con la bandeja del móvil si
+// puede: ahí se puede guardar en Archivos/iCloud o mandar por WhatsApp).
+// Devuelve 'shared' o 'downloaded'.
+async function saveOrShareTextFile(fileName, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const file = new File([blob], fileName, { type: mimeType });
+  if (await tryShareFile(file)) return 'shared';
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return 'downloaded';
+}
+
+// quiet: no muestra el aviso "Exportado" (para no tapar otros avisos, como el
+// "Deshacer" de cerrar periodo).
+async function exportBackup({ quiet = false } = {}) {
   state.lastBackupAt = todayISO();
   state.backupReminderFrom = state.lastBackupAt;
   saveState();
@@ -556,16 +584,8 @@ function exportBackup() {
   // El PIN no se incluye en la copia de seguridad: si se comparte o se sube
   // a otro sitio, no debería llevarse el candado de este dispositivo consigo.
   const exportState = { ...state, pin: undefined };
-  const blob = new Blob([JSON.stringify(exportState, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `gasolina-backup-${todayISO()}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  showToast('Exportado');
+  const how = await saveOrShareTextFile(`gasolina-backup-${todayISO()}.json`, JSON.stringify(exportState, null, 2), 'application/json');
+  if (!quiet) showToast(how === 'shared' ? 'Copia lista' : 'Copia descargada');
 }
 
 /* -------- Recordatorio de copia de seguridad -------- */
@@ -592,7 +612,7 @@ function renderBackupInfo() {
     : 'Aún no has hecho ninguna copia de seguridad de tus datos.';
 }
 
-qs('#backupNowBtn').addEventListener('click', exportBackup);
+qs('#backupNowBtn').addEventListener('click', () => exportBackup());
 qs('#backupLaterBtn').addEventListener('click', () => {
   // Posponer: vuelve a avisar dentro de una semana.
   state.backupReminderFrom = addDaysISO(todayISO(), -(BACKUP_REMINDER_DAYS - 7));
