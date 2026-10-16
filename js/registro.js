@@ -152,6 +152,7 @@ function copyPreviousWeek() {
     }
     const cloned = day.trips.filter(isCopyableTrip).map((t) => cloneTrip(t));
     target.trips.push(...cloned);
+    cloned.forEach((t) => noteHabit(t, target.date));
     tripsCopied += cloned.length;
   });
 
@@ -218,6 +219,7 @@ function copyPreviousDay(dayId) {
   const doCopy = () => {
     const cloned = prev.trips.filter(isCopyableTrip).map((t) => cloneTrip(t));
     target.trips.push(...cloned);
+    cloned.forEach((t) => noteHabit(t, target.date));
     saveState();
     renderRegistro();
     showToast('Trayectos copiados');
@@ -328,12 +330,13 @@ function renderRegistro() {
             <div class="day-card-subtitle">${day.trips.length} trayecto(s) · ${esc(formatEUR(dayCost))}</div>
           </div>
           <div class="day-card-actions">
-            ${idx > 0 ? `<button type="button" class="icon-btn" data-action="copy-day" aria-label="Copiar dÃ­a anterior" title="Copiar día anterior">${icon('copy')}</button>` : ''}
-            <button type="button" class="icon-btn danger" data-action="remove-day" aria-label="Eliminar dÃ­a" title="Eliminar día">${icon('trash')}</button>
+            ${idx > 0 ? `<button type="button" class="icon-btn" data-action="copy-day" aria-label="Copiar día anterior" title="Copiar día anterior">${icon('copy')}</button>` : ''}
+            <button type="button" class="icon-btn danger" data-action="remove-day" aria-label="Eliminar día" title="Eliminar día">${icon('trash')}</button>
           </div>
         </div>
         <div class="day-card-body">
           ${tripsHTML}
+          ${suggestionsHTML(day)}
           <button type="button" class="btn btn-secondary btn-block add-trip-btn" data-action="add-trip">+ Añadir trayecto</button>
         </div>
       </div>`;
@@ -416,6 +419,7 @@ qs('#dayList').addEventListener('click', (e) => {
   if (action === 'remove-day') return removeDay(dayId);
   if (action === 'copy-day') return copyPreviousDay(dayId);
   if (action === 'add-trip') return openTripModal(dayId, null);
+  if (action === 'add-suggested') return addSuggestedTrip(dayId, e.target.closest('[data-habit-key]').dataset.habitKey);
   if (action === 'edit-trip') return openTripModal(dayId, e.target.closest('.trip-row').dataset.tripId);
   if (action === 'duplicate-trip') return duplicateTrip(dayId, e.target.closest('.trip-row').dataset.tripId);
   if (action === 'remove-trip') return removeTrip(dayId, e.target.closest('.trip-row')?.dataset.tripId || e.target.dataset.tripId);
@@ -431,9 +435,64 @@ function duplicateTrip(dayId, tripId) {
   const clone = cloneTrip(trip);
   const idx = day.trips.indexOf(trip);
   day.trips.splice(idx + 1, 0, clone);
+  noteHabit(clone, day.date);
   saveState();
   renderRegistro();
   showToast('Trayecto duplicado');
+}
+
+// Anota el trayecto como hábito (alimenta las sugerencias y los atajos de km).
+function noteHabit(trip, date) {
+  if (!Array.isArray(state.tripHabits)) state.tripHabits = [];
+  recordHabit(state.tripHabits, trip, date);
+}
+
+// "Lo de siempre": un toque apunta el trayecto sugerido en ese día.
+function addSuggestedTrip(dayId, key) {
+  const day = state.period.days.find((d) => d.id === dayId);
+  const habit = (state.tripHabits || []).find((h) => habitKey(h) === key);
+  if (!day || !habit) return;
+  const habitsBefore = JSON.stringify(state.tripHabits);
+  const lastTripBefore = state.lastTrip;
+  const trip = tripFromHabit(habit);
+  day.trips.push(trip);
+  state.lastTrip = {
+    carId: trip.carId, savedTripId: null, km: trip.km, passengerIds: [...trip.passengerIds],
+    roundTrip: trip.roundTrip, returnPassengerIds: trip.returnPassengerIds || [], weights: undefined
+  };
+  noteHabit(trip, day.date);
+  saveState();
+  renderRegistro();
+  updatePeriodBadge();
+  showUndoToast('Trayecto añadido', () => {
+    day.trips = day.trips.filter((t) => t.id !== trip.id);
+    state.tripHabits = JSON.parse(habitsBefore);
+    state.lastTrip = lastTripBefore;
+    saveState();
+    renderRegistro();
+    updatePeriodBadge();
+  });
+}
+
+function suggestionsHTML(day) {
+  const suggestions = suggestTrips(state.tripHabits || [], day.date, day.trips, 3);
+  if (suggestions.length === 0) return '';
+  const nameOf = (id) => (state.people.find((p) => p.id === id) || {}).name || '?';
+  return `
+    <div class="suggest-block">
+      <div class="suggest-label">Lo de siempre · toca para añadir</div>
+      <div class="suggest-row">
+        ${suggestions.map((h) => {
+          const car = state.cars.find((c) => c.id === h.carId);
+          const who = h.passengerIds.length ? h.passengerIds.map(nameOf).join(', ') : 'sin pasajeros';
+          return `
+          <button type="button" class="suggest-chip" data-action="add-suggested" data-habit-key="${esc(habitKey(h))}">
+            <span class="suggest-chip-title">${esc(car.name)} · ${esc(formatKm(h.km))}${h.roundTrip ? ' · ida y vuelta' : ''}</span>
+            <span class="suggest-chip-sub">${esc(who)}</span>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`;
 }
 
 function removeTrip(dayId, tripId) {
@@ -505,9 +564,226 @@ function openTripModal(dayId, tripId, batchDates) {
   // El wizard no pasa por openModal() (tiene su propio ciclo de renderStep()
   // por paso), así que hay que anotar aquí el elemento con foco para poder
   // devolverlo al cerrar, igual que hace el resto de modales.
+  // Firma del trayecto duplicado ya avisado (ver commitTrip). Debe declararse
+  // antes del primer renderQuick()/renderStep(), que la reinician.
+  let ackedDuplicate = null;
+
   modalReturnFocusEl = document.activeElement;
   qs('#modalOverlay').classList.remove('hidden');
-  renderStep();
+  // Un trayecto nuevo se apunta en una sola pantalla; editar usa los pasos.
+  if (editing) renderStep(); else renderQuick();
+
+  // Guarda lo elegido (paso 3 del asistente o formulario rápido). Devuelve
+  // false, sin guardar, si avisa de que ya hay un trayecto igual ese día: se
+  // guarda al volver a pulsar el botón.
+  function commitTrip(passengerIds, returnPassengerIds, weights) {
+    // Al editar sin cambiar de coche se conservan el precio y consumo con
+    // los que se apuntó; si es nuevo o cambia el coche, se toman los de hoy.
+    const selectedCar = state.cars.find((c) => c.id === selection.carId);
+    const rates = (editing && editing.carId === selection.carId && editing.pricePerL > 0)
+      ? { consumption: editing.consumption, pricePerL: editing.pricePerL }
+      : tripRatesFromCar(selectedCar);
+
+    const tripData = {
+      ...rates,
+      carId: selection.carId,
+      km: selection.km,
+      passengerIds,
+      savedTripId: selection.savedTripId,
+      roundTrip: selection.roundTrip,
+      returnPassengerIds,
+      weights
+    };
+
+    const targetDays = batchDates && batchDates.length
+      ? batchDates.map((date) => state.period.days.find((dd) => dd.date === date)).filter(Boolean)
+      : (day ? [day] : []);
+    const dupDays = editing ? [] : targetDays.filter((d) => d.trips.some((t) => isSameTrip(t, tripData)));
+    const signature = JSON.stringify([habitKey(tripData), tripData.weights || null]);
+    if (dupDays.length && ackedDuplicate !== signature) {
+      ackedDuplicate = signature;
+      showDuplicateWarning(dupDays.length, batchDates && batchDates.length ? batchDates.length : 1);
+      return false;
+    }
+
+    state.lastTrip = {
+      carId: selection.carId,
+      savedTripId: selection.savedTripId,
+      km: selection.km,
+      passengerIds,
+      roundTrip: selection.roundTrip,
+      returnPassengerIds: returnPassengerIds || [],
+      weights
+    };
+
+    if (batchDates && batchDates.length) {
+      batchDates.forEach((date) => {
+        let d = state.period.days.find((dd) => dd.date === date);
+        if (!d) { d = { id: uid(), date, trips: [] }; state.period.days.push(d); }
+        d.trips.push({ id: uid(), ...tripData });
+        noteHabit(tripData, date);
+      });
+      saveState();
+      closeModal();
+      exitMultiSelect();
+      renderRegistro();
+      updatePeriodBadge();
+      showToast(`Trayecto añadido a ${batchDates.length} día(s)`);
+      return true;
+    }
+
+    if (editing) {
+      Object.assign(editing, tripData);
+    } else {
+      day.trips.push({ id: uid(), ...tripData });
+      noteHabit(tripData, day.date);
+    }
+    saveState();
+    closeModal();
+    renderRegistro();
+    showToast('Trayecto guardado');
+    return true;
+  }
+
+  function showDuplicateWarning(dupCount, dayCount) {
+    const text = dayCount > 1
+      ? `En ${dupCount} de los ${dayCount} días ya hay un trayecto igual (mismo coche, km y personas). Pulsa otra vez para añadirlo igualmente.`
+      : 'Ya hay un trayecto igual este día (mismo coche, km y personas). Pulsa otra vez para añadirlo igualmente.';
+    let warn = qs('#tripDupWarning');
+    if (!warn) {
+      warn = document.createElement('p');
+      warn.id = 'tripDupWarning';
+      warn.className = 'dup-warning';
+      warn.setAttribute('role', 'alert');
+      qs('#wizardSaveBtn, #quickSaveBtn').before(warn);
+    }
+    warn.textContent = text;
+    const btn = qs('#wizardSaveBtn, #quickSaveBtn');
+    btn.textContent = 'Añadir igualmente';
+    btn.classList.add('btn-warning');
+  }
+
+  /* ---- Formulario rápido: coche, km y pasajeros en una sola pantalla ---- */
+
+  // Pasa lo escrito/marcado en pantalla a `selection` (antes de redibujar o guardar).
+  function captureQuick() {
+    const kmInput = qs('#quickKmInput');
+    const km = kmInput ? parseFloat(kmInput.value) : NaN;
+    selection.km = km > 0 ? km : null;
+    if (kmInput) selection.savedTripId = null;
+    const roundTripEl = qs('#quickRoundTrip');
+    if (roundTripEl) selection.roundTrip = roundTripEl.checked;
+    selection.passengerIds = qsa('#quickPassengers input[type="checkbox"]:checked').map((cb) => cb.value);
+  }
+
+  function quickReturnIds() {
+    const car = state.cars.find((c) => c.id === selection.carId);
+    const active = (id) => activePeople().some((p) => p.id === id) && id !== (car && car.driverId);
+    return sameReturnUI ? [...selection.passengerIds] : selection.returnPassengerIds.filter(active);
+  }
+
+  function renderQuick() {
+    ackedDuplicate = null;
+    qs('#modalTitle').textContent = batchDates ? `Añadir trayecto a ${batchDates.length} día(s)` : 'Añadir trayecto';
+    const cars = activeCars();
+    const car = state.cars.find((c) => c.id === selection.carId);
+    const driver = car ? state.people.find((p) => p.id === car.driverId) : null;
+    const candidates = activePeople().filter((p) => p.id !== (car ? car.driverId : null));
+    const kmChips = frequentKm(state.tripHabits || [], selection.carId, 4);
+
+    const carHTML = cars.length > 1
+      ? `<div class="wizard-chip-row">${cars.map((c) => `
+          <button type="button" class="wizard-chip ${selection.carId === c.id ? 'selected' : ''}" data-quick-car="${c.id}">${esc(c.name)}</button>`).join('')}</div>`
+      : '';
+
+    qs('#modalBody').innerHTML = `
+      <div class="quick-form">
+        <p class="quick-label">Coche</p>
+        ${carHTML}
+        <p class="hint" style="margin:${cars.length > 1 ? '6px' : '0'} 0 14px;">${car ? `${icon('car')} ${esc(car.name)} · conduce ${esc(driver ? driver.name : '—')}` : ''}</p>
+
+        <p class="quick-label">Km <span class="quick-label-hint">(de un solo sentido)</span></p>
+        <input type="number" id="quickKmInput" class="input quick-km" inputmode="decimal" step="0.1" min="0" value="${selection.km || ''}" placeholder="15" enterkeyhint="done">
+        <div class="wizard-chip-row quick-km-chips" id="quickKmChips">
+          ${kmChips.map((k) => `<button type="button" class="wizard-chip" data-km="${k}">${esc(String(k).replace('.', ','))} km</button>`).join('')}
+          ${[1, 5, 10].map((n) => `<button type="button" class="wizard-chip chip-step" data-km-add="${n}" aria-label="Sumar ${n} km">+${n}</button>`).join('')}
+        </div>
+
+        <label class="field-toggle" style="margin:14px 0 4px;">
+          <input type="checkbox" id="quickRoundTrip" ${selection.roundTrip ? 'checked' : ''}>
+          <span>${icon('repeat')} Es de ida y vuelta</span>
+        </label>
+        ${selection.roundTrip && !sameReturnUI ? `<p class="hint" style="margin:0 0 6px;">La vuelta lleva a otras personas, como en el último trayecto. Cámbialo en «Más opciones».</p>` : ''}
+
+        <p class="quick-label" style="margin-top:14px;">¿Quién iba? <span class="quick-label-hint">(aparte del conductor)</span></p>
+        <div class="checkbox-grid" id="quickPassengers">
+          ${candidates.length ? candidates.map((p) => `
+            <label class="checkbox-row">
+              <input type="checkbox" value="${p.id}" ${selection.passengerIds.includes(p.id) ? 'checked' : ''}>
+              <span>${esc(p.name)}</span>
+            </label>`).join('') : '<p class="hint">No hay más personas que el conductor. Añade personas en Configuración.</p>'}
+        </div>
+
+        <button type="button" class="btn btn-primary btn-block mt-8" id="quickSaveBtn">${batchDates ? `Añadir a ${batchDates.length} día(s)` : 'Guardar trayecto'}</button>
+        <button type="button" class="btn btn-secondary btn-block mt-8" id="quickMoreBtn">Más opciones (vuelta distinta, partes…)</button>
+      </div>`;
+
+    const modalBodyEl = qs('#modalBody');
+    modalBodyEl.classList.remove('step-anim');
+    void modalBodyEl.offsetWidth;
+    modalBodyEl.classList.add('step-anim');
+
+    const kmInput = qs('#quickKmInput');
+    const syncKmChips = () => {
+      const v = parseFloat(kmInput.value);
+      qsa('#quickKmChips [data-km]').forEach((b) => b.classList.toggle('selected', Number(b.dataset.km) === v));
+    };
+    syncKmChips();
+
+    qsa('[data-quick-car]').forEach((btn) => btn.addEventListener('click', () => {
+      captureQuick();
+      selection.carId = btn.dataset.quickCar;
+      const newCar = state.cars.find((c) => c.id === selection.carId);
+      selection.passengerIds = selection.passengerIds.filter((id) => id !== newCar.driverId);
+      selection.returnPassengerIds = selection.returnPassengerIds.filter((id) => id !== newCar.driverId);
+      renderQuick();
+    }));
+    qsa('#quickKmChips [data-km]').forEach((btn) => btn.addEventListener('click', () => {
+      kmInput.value = btn.dataset.km;
+      syncKmChips();
+      kmInput.focus();
+    }));
+    qsa('#quickKmChips [data-km-add]').forEach((btn) => btn.addEventListener('click', () => {
+      const next = Math.round(((parseFloat(kmInput.value) || 0) + Number(btn.dataset.kmAdd)) * 10) / 10;
+      kmInput.value = next;
+      syncKmChips();
+      kmInput.focus();
+    }));
+    kmInput.addEventListener('input', syncKmChips);
+    kmInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); qs('#quickSaveBtn').click(); } });
+    qs('#quickRoundTrip').addEventListener('change', () => { captureQuick(); renderQuick(); });
+
+    qs('#quickMoreBtn').addEventListener('click', () => {
+      captureQuick();
+      if (selection.roundTrip && sameReturnUI) selection.returnPassengerIds = [...selection.passengerIds];
+      step = selection.km ? 3 : 2;
+      renderStep();
+    });
+
+    qs('#quickSaveBtn').addEventListener('click', (e) => {
+      captureQuick();
+      if (!selection.km) { showToast('Introduce unos km válidos'); kmInput.focus(); return; }
+      // Solo se deshabilita una vez pasa la validación (igual que en el
+      // asistente): así un doble toque no crea el trayecto dos veces.
+      e.target.disabled = true;
+      const passengerIds = [...selection.passengerIds];
+      const returnPassengerIds = selection.roundTrip ? quickReturnIds() : undefined;
+      if (!commitTrip(passengerIds, returnPassengerIds, undefined)) e.target.disabled = false;
+    });
+
+    kmInput.focus();
+    if (selection.km) kmInput.select();
+  }
 
   function stepDone(n) {
     if (n === 1) return !!selection.carId;
@@ -531,6 +807,7 @@ function openTripModal(dayId, tripId, batchDates) {
   }
 
   function renderStep() {
+    ackedDuplicate = null;
     qs('#modalTitle').textContent = batchDates ? `Añadir trayecto a ${batchDates.length} día(s)` : (editing ? 'Editar trayecto' : 'Añadir trayecto');
 
     const stepsHtml = `<div class="wizard-steps">${[1, 2, 3].map((n) => `
@@ -725,58 +1002,7 @@ function openTripModal(dayId, tripId, batchDates) {
           if (Object.keys(weights).length === 0) weights = undefined;
         }
 
-        state.lastTrip = {
-          carId: selection.carId,
-          savedTripId: selection.savedTripId,
-          km: selection.km,
-          passengerIds,
-          roundTrip: selection.roundTrip,
-          returnPassengerIds: selection.returnPassengerIds,
-          weights
-        };
-
-        // Al editar sin cambiar de coche se conservan el precio y consumo con
-        // los que se apuntó; si es nuevo o cambia el coche, se toman los de hoy.
-        const selectedCar = state.cars.find((c) => c.id === selection.carId);
-        const rates = (editing && editing.carId === selection.carId && editing.pricePerL > 0)
-          ? { consumption: editing.consumption, pricePerL: editing.pricePerL }
-          : tripRatesFromCar(selectedCar);
-
-        const tripData = {
-          ...rates,
-          carId: selection.carId,
-          km: selection.km,
-          passengerIds,
-          savedTripId: selection.savedTripId,
-          roundTrip: selection.roundTrip,
-          returnPassengerIds,
-          weights
-        };
-
-        if (batchDates && batchDates.length) {
-          batchDates.forEach((date) => {
-            let d = state.period.days.find((dd) => dd.date === date);
-            if (!d) { d = { id: uid(), date, trips: [] }; state.period.days.push(d); }
-            d.trips.push({ id: uid(), ...tripData });
-          });
-          saveState();
-          closeModal();
-          exitMultiSelect();
-          renderRegistro();
-          updatePeriodBadge();
-          showToast(`Trayecto añadido a ${batchDates.length} día(s)`);
-          return;
-        }
-
-        if (editing) {
-          Object.assign(editing, tripData);
-        } else {
-          day.trips.push({ id: uid(), ...tripData });
-        }
-        saveState();
-        closeModal();
-        renderRegistro();
-        showToast('Trayecto guardado');
+        if (!commitTrip(passengerIds, returnPassengerIds, weights)) e.target.disabled = false;
       });
     }
 

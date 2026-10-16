@@ -23,6 +23,10 @@ function assertEq(actual, expected, msg) {
   if (a !== b) throw new Error(`${msg ? msg + ': ' : ''}esperaba ${b}, salió ${a}`);
 }
 
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg || 'la condición no se cumple');
+}
+
 function assertClose(actual, expected, msg) {
   if (typeof actual !== 'number' || Math.abs(actual - expected) > 0.005) {
     throw new Error(`${msg ? msg + ': ' : ''}esperaba ${expected}, salió ${actual}`);
@@ -243,6 +247,128 @@ test('detalle de trayectos: coste y reparto por persona, y por tramo si es ida y
   assertEq(d[1].trips[0].legs.length, 2);
   assertClose(d[1].trips[0].cost, 18);
   assertEq(d[1].trips[0].legs[1].shares.map((s) => s.name), ['Marta', 'Ana']);
+});
+
+/* ------------------- Hábitos: sugerencias, km, duplicados ------------------ */
+
+const habitTrip = (props) => Object.assign({ carId: 'c1', km: 15, roundTrip: false, passengerIds: ['luis'] }, props);
+
+test('trayecto repetido: el orden de los pasajeros no importa, los km y los pesos sí', () => {
+  assert(isSameTrip(habitTrip({ passengerIds: ['luis', 'marta'] }), habitTrip({ passengerIds: ['marta', 'luis'] })));
+  assert(!isSameTrip(habitTrip(), habitTrip({ km: 16 })));
+  assert(!isSameTrip(habitTrip(), habitTrip({ passengerIds: [] })));
+  assert(!isSameTrip(habitTrip(), habitTrip({ weights: { luis: 2 } })));
+  assert(!isSameTrip(habitTrip({ roundTrip: true }), habitTrip()));
+});
+
+test('ida y vuelta con distintos pasajeros en la vuelta no es el mismo trayecto', () => {
+  const a = habitTrip({ roundTrip: true, passengerIds: ['luis'], returnPassengerIds: ['luis'] });
+  const b = habitTrip({ roundTrip: true, passengerIds: ['luis'], returnPassengerIds: ['marta'] });
+  assert(!isSameTrip(a, b));
+});
+
+test('anotar hábitos: cuenta repeticiones y días de la semana, y no anota repartos con partes', () => {
+  const habits = [];
+  recordHabit(habits, habitTrip(), '2026-09-14'); // lunes
+  recordHabit(habits, habitTrip(), '2026-09-21'); // lunes
+  recordHabit(habits, habitTrip(), '2026-09-16'); // miércoles
+  recordHabit(habits, habitTrip({ weights: { luis: 2 } }), '2026-09-16');
+  assertEq(habits.length, 1);
+  assertEq(habits[0].count, 3);
+  assertEq(habits[0].dows, [0, 2, 0, 1, 0, 0, 0]);
+  assertEq(habits[0].lastUsed, '2026-09-21');
+});
+
+test('los hábitos no pasan del máximo y se queda lo más usado', () => {
+  const habits = [];
+  for (let km = 1; km <= MAX_HABITS + 5; km++) recordHabit(habits, habitTrip({ km }), '2026-09-14');
+  recordHabit(habits, habitTrip({ km: 7 }), '2026-09-15');
+  assertEq(habits.length, MAX_HABITS);
+  assert(habits.some((h) => h.km === 7), 'el más repetido debería seguir');
+});
+
+test('sugerencias: primero lo más habitual y de ese día de la semana; no repite lo ya apuntado', () => {
+  state = makeState({
+    cars: [
+      { id: 'c1', name: 'Coche de Ana', driverId: 'ana', consumption: 6 },
+      { id: 'c2', name: 'Coche de Luis', driverId: 'luis', consumption: 6 }
+    ]
+  });
+  const habits = [];
+  for (let i = 0; i < 3; i++) recordHabit(habits, habitTrip({ km: 10 }), '2026-09-15'); // 3 martes
+  for (let i = 0; i < 2; i++) recordHabit(habits, habitTrip({ km: 20, passengerIds: ['marta'] }), '2026-09-14'); // 2 lunes
+  recordHabit(habits, habitTrip({ km: 30, carId: 'c2', passengerIds: ['marta'] }), '2026-09-20'); // 1 domingo
+  const kms = (list) => list.map((h) => h.km);
+
+  // Un lunes pesan más los de los lunes, aunque haya uno más repetido en total.
+  assertEq(kms(suggestTrips(habits, '2026-09-28', [])), [20, 10, 30]);
+  // Un martes, el de los martes.
+  assertEq(kms(suggestTrips(habits, '2026-09-29', []))[0], 10);
+  // Lo que ya está apuntado ese día no se vuelve a sugerir.
+  assertEq(kms(suggestTrips(habits, '2026-09-28', [habitTrip({ km: 20, passengerIds: ['marta'] })])), [10, 30]);
+  // Con límite.
+  assertEq(suggestTrips(habits, '2026-09-28', [], 1).length, 1);
+});
+
+test('sugerencias: se ignoran coches y personas que ya no están activos o el conductor como pasajero', () => {
+  state = makeState({
+    people: [{ id: 'ana', name: 'Ana' }, { id: 'luis', name: 'Luis', archived: true }, { id: 'marta', name: 'Marta' }],
+    cars: [
+      { id: 'c1', name: 'Coche de Ana', driverId: 'ana', consumption: 6 },
+      { id: 'c2', name: 'Viejo', driverId: 'ana', consumption: 6, archived: true }
+    ]
+  });
+  const habits = [];
+  recordHabit(habits, habitTrip({ km: 11, passengerIds: ['luis'] }), '2026-09-14'); // Luis está de baja
+  recordHabit(habits, habitTrip({ km: 12, carId: 'c2', passengerIds: [] }), '2026-09-14'); // coche eliminado
+  recordHabit(habits, habitTrip({ km: 13, passengerIds: ['ana'] }), '2026-09-14'); // el conductor no es pasajero
+  recordHabit(habits, habitTrip({ km: 14, passengerIds: ['marta'] }), '2026-09-14');
+  assertEq(suggestTrips(habits, '2026-09-28', []).map((h) => h.km), [14]);
+});
+
+test('atajos de km: los más usados de ese coche, de mayor a menor', () => {
+  const habits = [];
+  [[10, 3], [25, 5], [8, 1]].forEach(([km, n]) => { for (let i = 0; i < n; i++) recordHabit(habits, habitTrip({ km }), '2026-09-14'); });
+  recordHabit(habits, habitTrip({ km: 99, carId: 'c2' }), '2026-09-14');
+  assertEq(frequentKm(habits, 'c1'), [25, 10, 8]);
+  assertEq(frequentKm(habits, 'c1', 2), [25, 10]);
+  assertEq(frequentKm(habits, 'c9'), []);
+});
+
+test('un hábito se convierte en un trayecto nuevo con el precio de hoy', () => {
+  state = makeState();
+  const habits = [];
+  recordHabit(habits, habitTrip({ roundTrip: true, passengerIds: ['luis'], returnPassengerIds: ['marta'] }), '2026-09-14');
+  const t = tripFromHabit(habits[0]);
+  assertEq([t.carId, t.km, t.roundTrip, t.passengerIds, t.returnPassengerIds], ['c1', 15, true, ['luis'], ['marta']]);
+  assertEq([t.consumption, t.pricePerL], [6, 1.5]);
+  assert(t.id && t.weights === undefined);
+});
+
+test('hábitos de un periodo ya apuntado (para quien actualiza la app)', () => {
+  const p = period([day('2026-09-14', [trip({ km: 15, passengerIds: ['luis'] })]), day('2026-09-21', [trip({ km: 15, passengerIds: ['luis'] })])]);
+  const habits = habitsFromPeriod(p);
+  assertEq(habits.length, 1);
+  assertEq(habits[0].count, 2);
+});
+
+test('importar: los hábitos con coches o datos inexistentes se descartan y, sin ellos, se reconstruyen', () => {
+  const raw = JSON.parse(JSON.stringify(makeState({
+    period: period([day('2026-09-14', [trip({ km: 15, passengerIds: ['luis'] })])])
+  })));
+  // Sin el campo (copia antigua): se reconstruyen desde el periodo.
+  delete raw.tripHabits;
+  assertEq(sanitizeImportedState(JSON.parse(JSON.stringify(raw))).state.tripHabits.length, 1);
+  // Con campo: solo los válidos, y sin personas que ya no existen.
+  raw.tripHabits = [
+    { carId: 'c1', km: 15, roundTrip: false, passengerIds: ['luis', 'fantasma'], returnPassengerIds: [], count: 2, lastUsed: '2026-09-14', dows: [0, 1, 0, 0, 0, 0, 1] },
+    { carId: 'no-existe', km: 15, count: 1, lastUsed: '2026-09-14' },
+    { carId: 'c1', km: -3, count: 1, lastUsed: '2026-09-14' },
+    { carId: 'c1', km: 5, count: 1, lastUsed: 'ayer' }
+  ];
+  const h = sanitizeImportedState(JSON.parse(JSON.stringify(raw))).state.tripHabits;
+  assertEq(h.length, 1);
+  assertEq(h[0].passengerIds, ['luis']);
 });
 
 test('CSV del historial: cabecera, una fila por persona, decimales con coma y comillas', () => {

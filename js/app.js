@@ -173,43 +173,144 @@ function setupIosBanner() {
    Service worker
    ===================================================================== */
 
-function showUpdateBanner(worker) {
-  const banner = qs('#updateBanner');
-  banner.classList.remove('hidden');
-  qs('#updateReloadBtn').addEventListener('click', () => worker.postMessage('SKIP_WAITING'), { once: true });
+// La versión nueva se activa sola (ver sw.js). Aquí solo se recarga la página
+// para usarla, y solo cuando no hay nada a medias: con un formulario abierto
+// se espera, para no perder lo que se está escribiendo.
+function reloadWhenIdle() {
+  if (!qs('#modalOverlay').classList.contains('hidden')) {
+    setTimeout(reloadWhenIdle, 2500);
+    return;
+  }
+  showToast('Actualizando a la versión nueva…');
+  setTimeout(() => window.location.reload(), 600);
 }
+
+// Versión del service worker que controla esta página (null si no hay o no contesta).
+function currentSwVersion() {
+  return new Promise((resolve) => {
+    const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!controller) { resolve(null); return; }
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (e) => resolve((e.data && e.data.version) || null);
+    controller.postMessage('GET_VERSION', [channel.port2]);
+    setTimeout(() => resolve(null), 1500);
+  });
+}
+
+// Quita el service worker y las copias guardadas y recarga desde la red.
+// NO toca los datos (viven en localStorage): es el equivalente a quitar la app
+// de la pantalla de inicio y volver a añadirla, pero sin perder nada.
+async function forceRefreshApp() {
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+  } catch (e) { /* sigue */ }
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+  } catch (e) { /* sigue */ }
+  // El navegador guarda además sus propias copias (GitHub Pages, 10 minutos):
+  // se piden de nuevo saltándolas, o la recarga volvería a usar las viejas.
+  const urls = ['index.html', ...qsa('script[src], link[rel="stylesheet"]').map((el) => el.getAttribute('src') || el.getAttribute('href'))];
+  await Promise.all(urls.map((u) => fetch(u, { cache: 'reload' }).catch(() => {})));
+  window.location.reload();
+}
+
+// Compara la versión que corre con la que hay publicada y, si el móvil no se
+// ha enterado de la nueva, lo empuja: primero pidiendo el service worker nuevo
+// y, si tras unos segundos sigue igual, reinstalando la app (sin perder datos).
+// Devuelve 'current' | 'updating' | 'offline' | 'unsupported'.
+const FORCE_REFRESH_MIN_GAP_MS = 10 * 60 * 1000;
+
+async function checkForUpdate({ manual = false } = {}) {
+  if (!('serviceWorker' in navigator) || UI_TEST_MODE) return 'unsupported';
+
+  let remote = null;
+  try {
+    const text = await (await fetch('sw.js', { cache: 'no-store' })).text();
+    remote = (text.match(/CACHE_VERSION\s*=\s*'([^']+)'/) || [])[1] || null;
+  } catch (e) {
+    return 'offline';
+  }
+  if (!remote) return 'offline';
+
+  if ((await currentSwVersion()) === remote) return 'current';
+
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (reg) { try { await reg.update(); } catch (e) { /* sigue */ } }
+  // Si el service worker nuevo se activa, controllerchange recarga la página y
+  // esto no llega a ejecutarse. Si seguimos aquí, el móvil no se ha enterado.
+  await new Promise((r) => setTimeout(r, 6000));
+
+  const last = Number(localStorage.getItem('lastForcedRefresh') || 0);
+  if (manual || Date.now() - last > FORCE_REFRESH_MIN_GAP_MS) {
+    localStorage.setItem('lastForcedRefresh', String(Date.now()));
+    await forceRefreshApp();
+  }
+  return 'updating';
+}
+
+async function renderVersionInfo() {
+  const el = qs('#appVersionInfo');
+  if (!el) return;
+  const version = await currentSwVersion();
+  el.textContent = version ? `Versión instalada: ${version}.` : 'Versión instalada: sin determinar (se mostrará cuando la app se haya actualizado).';
+}
+
+qs('#checkUpdateBtn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  showToast('Buscando actualización…');
+  const result = await checkForUpdate({ manual: true });
+  btn.disabled = false;
+  if (result === 'current') showToast('Ya tienes la última versión');
+  else if (result === 'offline') showToast('Sin conexión: no se puede comprobar');
+  else if (result === 'unsupported') showToast('Este navegador no permite actualizar así');
+});
+
+qs('#reinstallAppBtn').addEventListener('click', () => {
+  confirmModal({
+    title: 'Reinstalar la app',
+    message: 'Se descargará la app de nuevo y se recargará. Tus datos (personas, coches, trayectos, historial) no se tocan.',
+    confirmLabel: 'Reinstalar',
+    onConfirm: () => forceRefreshApp()
+  });
+});
 
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || UI_TEST_MODE) return;
 
+  // En la primera instalación no había service worker previo: ahí no hay
+  // nada que recargar. Solo se recarga cuando uno nuevo sustituye a otro.
+  const hadController = !!navigator.serviceWorker.controller;
+
   window.addEventListener('load', async () => {
     try {
-      const reg = await navigator.serviceWorker.register('sw.js');
+      // updateViaCache: 'none' impide que el navegador reutilice una copia
+      // vieja del propio sw.js al buscar actualizaciones.
+      const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
 
-      if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg.waiting);
-
-      reg.addEventListener('updatefound', () => {
-        const newWorker = reg.installing;
-        if (!newWorker) return;
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            showUpdateBanner(newWorker);
-          }
-        });
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController || reloaded) return;
+        reloaded = true;
+        reloadWhenIdle();
       });
 
       // Instalada como app, puede pasar días abierta en segundo plano sin
-      // recargarse: al volver a ella se comprueba si hay versión nueva.
+      // recargarse: al volver a ella se busca versión nueva (como mucho una vez por minuto).
+      let lastCheck = 0;
+      const checkSoon = () => {
+        if (Date.now() - lastCheck < 60000) return;
+        lastCheck = Date.now();
+        reg.update().catch(() => {});
+        checkForUpdate().catch(() => {});
+      };
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+        if (document.visibilityState === 'visible') checkSoon();
       });
-
-      let reloadedForUpdate = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (reloadedForUpdate) return;
-        reloadedForUpdate = true;
-        window.location.reload();
-      });
+      setTimeout(checkSoon, 2500);
+      setTimeout(renderVersionInfo, 1200);
     } catch (err) {
       console.warn('SW no registrado', err);
     }
@@ -230,6 +331,7 @@ function renderAll() {
 
 setupThemeToggle();
 freezeUnratedTrips();
+if (!Array.isArray(state.tripHabits)) { state.tripHabits = habitsFromPeriod(state.period); saveState(); }
 renderAll();
 setupIosBanner();
 setupLockScreen();

@@ -10,6 +10,12 @@ const results = [];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Espera a que algo ocurra (en vez de adivinar cuánto tarda).
+async function waitFor(cond, ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end && !cond()) await sleep(50);
+}
+
 function assert(cond, msg) { if (!cond) throw new Error(msg || 'la condición no se cumple'); }
 function assertEq(actual, expected, msg) {
   const a = JSON.stringify(actual), b = JSON.stringify(expected);
@@ -101,6 +107,17 @@ test('ningún texto de la interfaz lleva emojis', async () => {
   assert(!found, `emojis encontrados: ${found}`);
 });
 
+test('no hay caracteres rotos (codificación) en textos ni etiquetas', async () => {
+  const { doc, click } = await openApp();
+  for (const tab of ['resumen', 'config', 'historial', 'registro']) await click(`.tab-btn[data-tab="${tab}"]`);
+  const clone = doc.body.cloneNode(true);
+  clone.querySelectorAll('script, style').forEach((n) => n.remove());
+  const labels = [...clone.querySelectorAll('[aria-label], [title], [placeholder]')]
+    .map((n) => `${n.getAttribute('aria-label') || ''} ${n.getAttribute('title') || ''} ${n.getAttribute('placeholder') || ''}`).join(' ');
+  const broken = (clone.textContent + ' ' + labels).match(/[ÃÂ]|�/g);
+  assert(!broken, `caracteres rotos: ${broken}`);
+});
+
 test('todos los botones sin texto tienen nombre accesible', async () => {
   const { doc, click } = await openApp();
   for (const tab of ['resumen', 'config', 'historial', 'registro']) await click(`.tab-btn[data-tab="${tab}"]`);
@@ -146,7 +163,7 @@ test('compartir como imagen envía un PNG', async () => {
   await click('.tab-btn[data-tab="resumen"]');
   await click('#shareSummaryBtn');
   await click('#shareAsImageBtn');
-  await sleep(600);
+  await waitFor(() => shared.files.length > 0, 5000);
   assertEq(shared.files.length, 1, 'archivos compartidos');
   assertEq(shared.files[0].type, 'image/png');
   assert(shared.files[0].size > 5000, 'la imagen parece vacía');
@@ -218,6 +235,188 @@ test('el historial se exporta a CSV', async () => {
 test('el botón CSV no aparece sin historial', async () => {
   const { q } = await openApp();
   assert(q('#exportHistoryCsvBtn').classList.contains('hidden'));
+});
+
+/* ------------------------- Registro rápido -------------------------- */
+
+const setValue = (el, value) => { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); };
+const stateOf = (win) => win.eval('state');
+
+test('añadir trayecto abre un formulario de una sola pantalla', async () => {
+  const { doc, q, click } = await openApp();
+  await click('#dayList [data-action="add-trip"]');
+  assert(q('#quickKmInput') && q('#quickPassengers') && q('#quickSaveBtn'), 'faltan coche, km o pasajeros');
+  assertEq(doc.querySelectorAll('.wizard-dot').length, 0, 'no debería haber pasos');
+  assert(doc.activeElement === q('#quickKmInput'), 'el campo de km debería tener el foco');
+});
+
+test('guardar con km y pasajeros crea el trayecto y lo anota como hábito', async () => {
+  const { win, q, doc, click } = await openApp();
+  const before = stateOf(win).period.days[0].trips.length;
+  await click('#dayList [data-action="add-trip"]');
+  setValue(q('#quickKmInput'), '20');
+  doc.querySelector('#quickPassengers input[value="marta"]').checked = true;
+  await click('#quickSaveBtn');
+  const trips = stateOf(win).period.days[0].trips;
+  assertEq(trips.length, before + 1, 'trayectos del día');
+  const added = trips[trips.length - 1];
+  assertEq([added.km, added.passengerIds], [20, ['marta']]);
+  assert(stateOf(win).tripHabits.some((h) => h.km === 20), 'debería quedar como hábito');
+});
+
+test('sin km no guarda y avisa', async () => {
+  const { win, q, click } = await openApp();
+  const before = stateOf(win).period.days[0].trips.length;
+  await click('#dayList [data-action="add-trip"]');
+  await click('#quickSaveBtn');
+  assertEq(stateOf(win).period.days[0].trips.length, before);
+  assert(!q('#modalOverlay').classList.contains('hidden'), 'el formulario debería seguir abierto');
+});
+
+test('atajos de km: los habituales y +1/+5/+10 rellenan el campo', async () => {
+  const { q, doc, click } = await openApp();
+  await click('#dayList [data-action="add-trip"]');
+  const chip = q('#quickKmChips [data-km]');
+  assert(chip, 'debería haber un atajo con los km habituales');
+  await click(chip);
+  assertEq(q('#quickKmInput').value, '100');
+  assert(chip.classList.contains('selected'), 'el atajo debería marcarse');
+  await click('#quickKmChips [data-km-add="10"]');
+  assertEq(q('#quickKmInput').value, '110');
+  await click('#quickKmChips [data-km-add="1"]');
+  assertEq(q('#quickKmInput').value, '111');
+});
+
+test('si ya hay un trayecto igual ese día avisa y se añade al confirmar', async () => {
+  const { win, q, doc, click } = await openApp();
+  const before = stateOf(win).period.days[0].trips.length;
+  await click('#dayList [data-action="add-trip"]');
+  // Igual que el primero de la semilla: Coche de Ana, 100 km, con Luis.
+  setValue(q('#quickKmInput'), '100');
+  doc.querySelector('#quickPassengers input[value="luis"]').checked = true;
+  await click('#quickSaveBtn');
+  assert(q('#tripDupWarning'), 'debería avisar del duplicado');
+  assertEq(stateOf(win).period.days[0].trips.length, before, 'no debería guardar todavía');
+  assert(/igualmente/.test(q('#quickSaveBtn').textContent), 'el botón debería ofrecer añadirlo igualmente');
+  await click('#quickSaveBtn');
+  assertEq(stateOf(win).period.days[0].trips.length, before + 1, 'trayectos tras confirmar');
+});
+
+test('"Más opciones" lleva al asistente con lo ya escrito', async () => {
+  const { q, click } = await openApp();
+  await click('#dayList [data-action="add-trip"]');
+  setValue(q('#quickKmInput'), '12');
+  await click('#quickMoreBtn');
+  assert(q('#wizardSaveBtn'), 'debería abrirse el paso de pasajeros');
+  assert(q('#weightedToggle') || q('#modalBody .checkbox-grid'), 'debería mostrar las opciones avanzadas');
+});
+
+test('editar un trayecto sigue usando el asistente por pasos', async () => {
+  const { doc, q, click } = await openApp();
+  await click('#dayList [data-action="edit-trip"]');
+  assertEq(doc.querySelectorAll('.wizard-dot').length, 3, 'pasos del asistente');
+  assert(!q('#quickKmInput'), 'editar no usa el formulario rápido');
+});
+
+test('"Lo de siempre": un toque añade el trayecto sugerido y se puede deshacer', async () => {
+  const seed = seedState();
+  const yesterday = localISO(new Date(Date.now() - 86400000));
+  seed.period.days.unshift({ id: 'd0', date: yesterday, trips: [] });
+  const { win, doc, click } = await openApp({ period: seed.period });
+  const card = () => doc.querySelector('.day-card[data-day-id="d0"]');
+  const chips = () => card().querySelectorAll('.suggest-chip');
+  const before = chips().length;
+  assert(before >= 1, 'el día vacío debería mostrar sugerencias');
+  assertEq(doc.querySelector('.day-card[data-day-id="d1"]').querySelectorAll('.suggest-chip').length, 0, 'un día que ya tiene esos trayectos no los repite');
+  await click(chips()[0]);
+  const day = () => stateOf(win).period.days.find((d) => d.id === 'd0');
+  assertEq(day().trips.length, 1, 'trayectos tras tocar la sugerencia');
+  assertEq(chips().length, before - 1, 'la sugerencia usada desaparece');
+  await click('#toastUndoBtn');
+  assertEq(day().trips.length, 0, 'trayectos tras deshacer');
+  assertEq(chips().length, before, 'la sugerencia vuelve');
+});
+
+test('con un solo coche no se pide elegir coche', async () => {
+  const seed = seedState();
+  const { q, doc, click } = await openApp({
+    cars: [seed.cars[0]],
+    period: { ...seed.period, days: [{ ...seed.period.days[0], trips: [] }] }
+  });
+  await click('#dayList [data-action="add-trip"]');
+  assertEq(doc.querySelectorAll('[data-quick-car]').length, 0, 'chips de coche');
+  assert(/Coche de Ana/.test(q('.quick-form').textContent), 'debería decir qué coche es');
+});
+
+test('varios días a la vez: el formulario rápido añade el trayecto a todos', async () => {
+  const { win, q, doc, click } = await openApp();
+  const d1 = localISO(new Date(Date.now() - 2 * 86400000));
+  const d2 = localISO(new Date(Date.now() - 3 * 86400000));
+  win.openTripModal(null, null, [d1, d2]);
+  await sleep(80);
+  assert(/2 día\(s\)/.test(q('#modalTitle').textContent), 'el título debería decir cuántos días');
+  setValue(q('#quickKmInput'), '9');
+  doc.querySelector('#quickPassengers input[value="marta"]').checked = true;
+  await click('#quickSaveBtn');
+  const days = stateOf(win).period.days;
+  [d1, d2].forEach((d) => {
+    const day = days.find((x) => x.date === d);
+    assert(day && day.trips.length === 1 && day.trips[0].km === 9, `falta el trayecto el ${d}`);
+  });
+  assertEq(stateOf(win).tripHabits.find((h) => h.km === 9).count, 2, 'cuenta como dos veces');
+});
+
+test('si el último trayecto tenía otra gente a la vuelta, se conserva y se avisa', async () => {
+  const { win, q, doc, click } = await openApp({
+    lastTrip: { carId: 'c1', savedTripId: null, km: 30, passengerIds: ['luis'], roundTrip: true, returnPassengerIds: ['marta'] }
+  });
+  await click('#dayList [data-action="add-trip"]');
+  assert(q('#quickRoundTrip').checked, 'ida y vuelta debería venir marcada');
+  assert(/otras personas/.test(q('.quick-form').textContent), 'debería avisar de que la vuelta es distinta');
+  assertEq(q('#quickKmInput').value, '30', 'km del último trayecto');
+  await click('#quickSaveBtn');
+  const trips = stateOf(win).period.days[0].trips;
+  const added = trips[trips.length - 1];
+  assertEq([added.passengerIds, added.returnPassengerIds], [['luis'], ['marta']]);
+});
+
+test('copiar el día anterior también alimenta las sugerencias', async () => {
+  const seed = seedState();
+  const yesterday = localISO(new Date(Date.now() - 86400000));
+  // Hoy sin trayectos y ayer con uno: sin hábitos de partida.
+  const trips = seed.period.days[0].trips;
+  const { win, doc, click } = await openApp({
+    tripHabits: [],
+    period: { ...seed.period, days: [{ id: 'dy', date: yesterday, trips: [trips[0]] }, { id: 'dt', date: seed.period.days[0].date, trips: [] }] }
+  });
+  stateOf(win).tripHabits.length = 0;
+  await click('.day-card[data-day-id="dt"] [data-action="copy-day"]');
+  assertEq(stateOf(win).period.days.find((d) => d.id === 'dt').trips.length, 1, 'trayectos copiados');
+  assertEq(stateOf(win).tripHabits.length, 1, 'hábitos tras copiar');
+});
+
+test('Configuración ofrece buscar actualización y reinstalar; el aviso viejo ya no existe', async () => {
+  const { doc, q, click } = await openApp();
+  await click('.tab-btn[data-tab="config"]');
+  assert(q('#checkUpdateBtn') && q('#reinstallAppBtn'), 'faltan los botones de actualización');
+  assert(!q('#updateBanner'), 'el aviso "Actualizar" ya no debería existir');
+  assert(/Actualizaciones/.test(doc.body.textContent));
+});
+
+test('"Reinstalar la app" pide confirmación y cancelar no toca los datos', async () => {
+  const { win, q, click } = await openApp();
+  await click('.tab-btn[data-tab="config"]');
+  const before = JSON.stringify(stateOf(win).people);
+  await click('#reinstallAppBtn');
+  assert(/no se tocan/.test(q('#modalBody').textContent), 'debería explicar que los datos no se tocan');
+  await click('#confirmCancelBtn');
+  assert(q('#modalOverlay').classList.contains('hidden'), 'cancelar debería cerrar el diálogo');
+  assertEq(JSON.stringify(stateOf(win).people), before, 'personas');
+});
+
+test('sin hábitos no se muestra "Lo de siempre"', async () => {
+  const { doc } = await openApp({ period: { id: 'p1', createdAt: localISO(new Date()), days: [{ id: 'd1', date: localISO(new Date()), trips: [] }], settlements: [] } });
+  assertEq(doc.querySelectorAll('.suggest-block').length, 0);
 });
 
 /* ------------------------------ Resultado ----------------------------- */

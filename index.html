@@ -39,11 +39,6 @@
   <button type="button" id="iosInstallDismiss" class="icon-btn" aria-label="Cerrar aviso"><i data-icon="x"></i></button>
 </div>
 
-<div id="updateBanner" class="ios-banner update-banner hidden">
-  <span>Hay una versión nueva de la app disponible.</span>
-  <button type="button" id="updateReloadBtn" class="btn btn-sm btn-primary">Actualizar</button>
-</div>
-
 <div id="backupBanner" class="ios-banner update-banner backup-banner hidden">
   <span id="backupBannerText"></span>
   <div class="row-inline">
@@ -194,6 +189,17 @@
     <div class="card">
       <h2>Seguridad</h2>
       <div id="securityPinStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Actualizaciones</h2>
+      <p class="hint">La app se actualiza sola al abrirla con conexión. Si algún día no lo hiciera, puedes forzarlo aquí.</p>
+      <p class="hint" id="appVersionInfo"></p>
+      <div class="row-inline wrap">
+        <button type="button" class="btn btn-secondary" id="checkUpdateBtn"><i data-icon="refresh"></i> Buscar actualización</button>
+        <button type="button" class="btn btn-secondary" id="reinstallAppBtn">Reinstalar la app</button>
+      </div>
+      <p class="hint" style="margin-top:8px;">«Reinstalar» vuelve a descargar la app y no borra tus datos.</p>
     </div>
 
     <div class="card">

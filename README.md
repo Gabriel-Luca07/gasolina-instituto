@@ -26,11 +26,20 @@ No hace falta ningún paso de compilación: son archivos estáticos.
 3. Elige **"Añadir a pantalla de inicio"**.
 4. Listo: se abrirá como una app normal, a pantalla completa y funcionando sin conexión.
 
+## Actualizaciones automáticas (también con la app en la pantalla de inicio)
+
+Tras subir una versión no hace falta quitar la app de la pantalla de inicio ni hacer nada: al abrirla con conexión se actualiza sola.
+
+- `sw.js` pide siempre la versión más reciente a la red (nunca sirve primero lo guardado) y deja una copia para el modo sin conexión. La versión nueva se activa sola y la página se recarga, esperando a que no haya un formulario abierto para no perder lo que se escribe.
+- Cada vez que se abre o se vuelve a la app, esta compara su versión con la publicada. Si el móvil no se ha enterado de la nueva, lo empuja y, si hace falta, reinstala la app **sin tocar los datos** (viven en `localStorage`).
+- En **Configuración → Actualizaciones** hay «Buscar actualización» y «Reinstalar la app» por si alguna vez hiciera falta forzarlo a mano.
+- Sigue valiendo la regla de siempre: cada commit que cambie archivos de la app debe subir `CACHE_VERSION` en `sw.js` (lo hace el hook de abajo).
+
 ## Funcionamiento offline
 
-El archivo `sw.js` (service worker) cachea todos los archivos de la app la primera vez que se visita con conexión. A partir de ahí, la app funciona sin internet. Solo necesitas conexión la primera vez para instalarla y cada vez que subas una nueva versión.
+El archivo `sw.js` (service worker) guarda una copia de todos los archivos de la app cada vez que se abre con conexión. Sin conexión, la app funciona con esa copia. Solo necesitas conexión la primera vez para instalarla y para recibir cada versión nueva.
 
-Para que los usuarios reciban una versión nueva hay que subir `CACHE_VERSION` en `sw.js`. El hook `.githooks/pre-commit` lo hace solo en cada commit que cambie archivos de la app (si no lo has subido ya a mano). Actívalo una vez en cada clon del repositorio:
+Para que los móviles detecten una versión nueva hay que subir `CACHE_VERSION` en `sw.js`. El hook `.githooks/pre-commit` lo hace solo en cada commit que cambie archivos de la app (si no lo has subido ya a mano). Actívalo una vez en cada clon del repositorio:
 
 ```bash
 git config core.hooksPath .githooks
@@ -41,6 +50,13 @@ git config core.hooksPath .githooks
 `tests.html` prueba el cálculo (`js/calc.js`): costes, reparto, pesos, deudas, pagos, consumo real, recordatorios e importación. Ábrelo en el navegador desde un servidor local (por ejemplo `python -m http.server` o la extensión Live Server de VS Code) y ejecútalo después de tocar cualquier cálculo: arriba sale en verde o en rojo, con el detalle de lo que falla.
 
 `tests-ui.html` prueba la interfaz: carga la app real en un marco con `?uitest` (usa otra clave de almacenamiento, así que no toca tus datos) y la maneja como un usuario: cambiar de pestaña, compartir como imagen o texto, modo simplificado, cerrar periodo y deshacer, pagos parciales, exportar copia y CSV, sin emojis y con nombres accesibles en los botones de icono. Se abre igual, desde un servidor local.
+
+## Registrar trayectos rápido
+
+- **Una sola pantalla:** al añadir un trayecto salen juntos el coche, los km y quién iba, con lo del último trayecto ya marcado. «Más opciones» abre el asistente por pasos para la vuelta con otras personas o el reparto en partes distintas; editar un trayecto también usa el asistente.
+- **Atajos de km:** bajo el campo salen los km más usados con ese coche, y botones +1, +5 y +10.
+- **Lo de siempre:** en cada día aparecen hasta 3 trayectos sugeridos (los más repetidos, con más peso los de ese día de la semana). Un toque lo apunta, y se puede deshacer. Se aprenden solos de lo que apuntas, duplicas o copias, y se conservan al cerrar un periodo.
+- **Aviso de duplicado:** si ya hay un trayecto igual ese día (mismo coche, km y personas) avisa y pide pulsar otra vez para añadirlo igualmente.
 
 ## Copia de seguridad de los datos
 

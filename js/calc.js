@@ -391,6 +391,28 @@ function computeRealConsumption(carId) {
   return { liters, km, consumption: liters / km * 100 };
 }
 
+// Hábitos de un archivo importado: solo los que tienen datos válidos y
+// referencias existentes. Si el archivo no los traía (copia antigua), se
+// reconstruyen desde los trayectos del periodo.
+function sanitizeHabits(raw, carIds, peopleIds, period) {
+  if (!Array.isArray(raw)) return habitsFromPeriod(period);
+  const isoDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const ids = (a) => (Array.isArray(a) ? a.filter((id) => peopleIds.has(id)) : []);
+  return raw
+    .filter((h) => h && carIds.has(h.carId) && Number(h.km) > 0 && Number(h.count) > 0 && isoDate(h.lastUsed))
+    .map((h) => ({
+      carId: h.carId,
+      km: Number(h.km),
+      roundTrip: !!h.roundTrip,
+      passengerIds: ids(h.passengerIds).sort(),
+      returnPassengerIds: h.roundTrip ? ids(h.returnPassengerIds).sort() : [],
+      count: Math.floor(Number(h.count)),
+      lastUsed: h.lastUsed,
+      dows: Array.isArray(h.dows) && h.dows.length === 7 ? h.dows.map((n) => Math.max(0, Math.floor(Number(n)) || 0)) : [0, 0, 0, 0, 0, 0, 0]
+    }))
+    .slice(0, MAX_HABITS);
+}
+
 // Reconstruye un estado válido a partir de un JSON externo, descartando (sin
 // romper el resto) cualquier entrada con datos incompletos o referencias a
 // ids que no existen (p.ej. un trayecto cuyo coche ya no está en el
@@ -537,6 +559,7 @@ function sanitizeImportedState(raw) {
       // comparte o se guarda en otro sitio, no queremos propagar (ni
       // bloquear al usuario con) un PIN que no acaba de teclear él mismo.
       pin: null,
+      tripHabits: sanitizeHabits(raw.tripHabits, carIds, peopleIds, period),
       settleMode: raw.settleMode === 'simplified' ? 'simplified' : 'pairwise',
       refuels,
       lastBackupAt: isISODate(raw.lastBackupAt) ? raw.lastBackupAt : null,
@@ -546,6 +569,116 @@ function sanitizeImportedState(raw) {
       closeReminderSnoozedUntil: null
     },
     issues
+  };
+}
+
+/* =====================================================================
+   HÁBITOS: trayectos que se repiten (sugerencias, atajos de km, duplicados)
+   ===================================================================== */
+
+const MAX_HABITS = 40;
+
+// Dos trayectos "son el mismo" si coinciden coche, km, ida y vuelta y las
+// personas de cada tramo (el orden en que se marcaron no importa).
+function habitKey(t) {
+  const ids = (a) => [...(a || [])].sort().join(',');
+  return [
+    t.carId,
+    Number(t.km),
+    t.roundTrip ? 1 : 0,
+    ids(t.passengerIds),
+    t.roundTrip ? ids(t.returnPassengerIds || t.passengerIds) : ''
+  ].join('|');
+}
+
+function hasCustomWeights(t) {
+  return !!(t.weights && Object.keys(t.weights).length);
+}
+
+function isSameTrip(a, b) {
+  return habitKey(a) === habitKey(b) && hasCustomWeights(a) === hasCustomWeights(b)
+    && (!hasCustomWeights(a) || JSON.stringify(a.weights) === JSON.stringify(b.weights));
+}
+
+function habitScore(h, dow) {
+  // Lo que más se repite, con un empujón para lo que se hace ese día de la semana.
+  return h.count + 3 * ((h.dows || [])[dow] || 0);
+}
+
+// Anota que se ha hecho este trayecto en esa fecha. Los repartos con partes
+// distintas no se anotan: sugerirlos sin las partes sería engañoso.
+// Modifica y devuelve la lista (state.tripHabits).
+function recordHabit(habits, trip, date) {
+  if (hasCustomWeights(trip) || !(Number(trip.km) > 0) || !trip.carId) return habits;
+  const key = habitKey(trip);
+  let h = habits.find((x) => habitKey(x) === key);
+  if (!h) {
+    h = {
+      carId: trip.carId,
+      km: Number(trip.km),
+      roundTrip: !!trip.roundTrip,
+      passengerIds: [...(trip.passengerIds || [])].sort(),
+      returnPassengerIds: trip.roundTrip ? [...(trip.returnPassengerIds || trip.passengerIds || [])].sort() : [],
+      count: 0,
+      lastUsed: date,
+      dows: [0, 0, 0, 0, 0, 0, 0]
+    };
+    habits.push(h);
+  }
+  h.count++;
+  if (date > h.lastUsed) h.lastUsed = date;
+  h.dows[parseISODate(date).getDay()]++;
+  if (habits.length > MAX_HABITS) {
+    habits.sort((a, b) => b.count - a.count || b.lastUsed.localeCompare(a.lastUsed));
+    habits.length = MAX_HABITS;
+  }
+  return habits;
+}
+
+// Hábitos a partir de los trayectos ya apuntados (para quien ya tenía datos
+// antes de existir las sugerencias).
+function habitsFromPeriod(period) {
+  const habits = [];
+  getSortedDays(period).forEach((day) => day.trips.forEach((t) => recordHabit(habits, t, day.date)));
+  return habits;
+}
+
+// Trayectos que sugerir en un día: los más habituales (y de ese día de la
+// semana) cuyo coche y personas siguen activos y que aún no están apuntados ese día.
+function suggestTrips(habits, dateISO, dayTrips, limit) {
+  const dow = parseISODate(dateISO).getDay();
+  const present = new Set((dayTrips || []).map(habitKey));
+  const peopleOk = (ids) => (ids || []).every((id) => activePeople().some((p) => p.id === id));
+  return habits
+    .filter((h) => {
+      const car = activeCars().find((c) => c.id === h.carId);
+      return car && !h.passengerIds.includes(car.driverId) && !h.returnPassengerIds.includes(car.driverId)
+        && peopleOk(h.passengerIds) && peopleOk(h.returnPassengerIds) && !present.has(habitKey(h));
+    })
+    .sort((a, b) => habitScore(b, dow) - habitScore(a, dow) || b.lastUsed.localeCompare(a.lastUsed))
+    .slice(0, limit || 3);
+}
+
+// Km más habituales de un coche, para ofrecerlos como atajo al teclear.
+function frequentKm(habits, carId, limit) {
+  const totals = new Map();
+  habits.filter((h) => h.carId === carId).forEach((h) => totals.set(h.km, (totals.get(h.km) || 0) + h.count));
+  return [...totals.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0]).slice(0, limit || 4).map(([km]) => km);
+}
+
+// Trayecto nuevo listo para apuntar a partir de un hábito (precio y consumo de hoy).
+function tripFromHabit(h) {
+  const car = state.cars.find((c) => c.id === h.carId);
+  return {
+    id: uid(),
+    ...(car ? tripRatesFromCar(car) : {}),
+    carId: h.carId,
+    km: h.km,
+    passengerIds: [...h.passengerIds],
+    savedTripId: null,
+    roundTrip: !!h.roundTrip,
+    returnPassengerIds: h.roundTrip ? [...h.returnPassengerIds] : undefined,
+    weights: undefined
   };
 }
 

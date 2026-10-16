@@ -159,7 +159,7 @@ function renderCars() {
   renderArchivedSection('#archivedCars', state.cars.filter((c) => c.archived), 'Coches eliminados', (c) => `${icon('car')} ${esc(c.name)}`);
   list.innerHTML = cars.map((c) => {
     const driver = state.people.find((p) => p.id === c.driverId);
-    const priceLabel = c.useOwnPrice && c.ownPrice ? `${c.ownPrice} €/L propio` : 'precio general';
+    const priceLabel = c.useOwnPrice && c.ownPrice ? `${formatPricePerL(c.ownPrice)} propio` : 'precio general';
     return `
     <div class="item-row" data-id="${c.id}">
       <div class="item-row-main">

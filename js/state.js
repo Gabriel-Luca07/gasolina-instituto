@@ -14,6 +14,9 @@ function createDefaultState() {
     driverPays: true,
     // 'pairwise' = persona a persona; 'simplified' = pagos mínimos entre todos.
     settleMode: 'pairwise',
+    // Trayectos que se repiten (ver recordHabit en calc.js): alimentan las
+    // sugerencias y los atajos de km. Sobreviven al cierre de periodo.
+    tripHabits: [],
     period: { id: uid(), createdAt: todayISO(), days: [] },
     history: [],
     lastTrip: null,
@@ -45,6 +48,9 @@ function loadState() {
     if (typeof parsed.globalPrice !== 'number') parsed.globalPrice = 1.65;
     if (typeof parsed.driverPays !== 'boolean') parsed.driverPays = true;
     if (!['pairwise', 'simplified'].includes(parsed.settleMode)) parsed.settleMode = 'pairwise';
+    // null = datos de antes de existir las sugerencias: app.js los reconstruye
+    // con los trayectos ya apuntados (calc.js aún no está cargado aquí).
+    if (!Array.isArray(parsed.tripHabits)) parsed.tripHabits = null;
     if (!['auto', 'light', 'dark'].includes(parsed.theme)) parsed.theme = 'auto';
     if (!(/^\d{4}$/.test(parsed.pin))) parsed.pin = null;
     if (!Array.isArray(parsed.refuels)) parsed.refuels = [];
